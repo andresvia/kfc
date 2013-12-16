@@ -3,15 +3,178 @@
 KFC
 ===
 
-A keepass-fabric cluster.
+A KeePass-Fabric Cluster.
+
+DISCLAIMER: I take no resposability for the use you give to this software you
+may find very useful or very destructive if you use it in the wrong way.
+
+USE KFC AT YOUR OWN RISK. --av.-
 
 Project status
 --------------
 
-This is alpha software.
+This is working alpha software. I have coded this Python Fabric recipe according
+to my needs you may find this software useful if you have an scenario similar
+to mine.
+
+See the source to learn how it works. Sorry, the code is still messy.
 
 Scenario
 --------
 
+ * Need to work on variety of UNIX-like OSes
+   * HP-UX
+   * Solaris
+   * Linux
+   * AIX
+ * Don't want to repeat same passwords across all OSes
+ * sshd have some eccentric "security" settings
+   * Don't always have direct root access (PermitRootLogin no)
+   * Don't always have ssh key authentication (PubkeyAuthentication no)
+   * Don't always have sudo (almost never)
+   * Changing any of these settings is a hastle.
+ * Want to have a simple cache to store OS output from commands. Useful for
+   off-line fast Python command output parsing.
 
+My proposed solution
+--------------------
+
+ * Use KeePass to store the passwords safely
+ * Use Python Fabric to work on OSes
+ * Store command output on a simple pickle dictionary used as a LRU cache.
+
+KFC requirements
+----------------
+
+ * KFC needs the following Python requirements to work
+
+   (env)[andres@arch kfc]$ pip freeze
+   Fabric==1.8.0
+   ecdsa==0.8
+   keepassdb==0.2.1
+   paramiko==1.12.0
+   pycrypto==2.6
+   wsgiref==0.1.2
+
+   A newer environment will probably also work.
+
+KFC config requirements
+-----------------------
+
+KFC reads simple .ini configuration files.
+
+Have some "kfc/*.ini" file(s) in you $HOME directory with a configuration similar
+to this one.
+
+  # global section is used to define command output cache settings.
+
+  [global]
+
+  # cache_store is the full path to the pickle database used to store command
+  # output cache
+
+  cache_store = /home/andres/kfc/kfc.db
+
+  # cache_size defines the maximum number of items that will be saved in the
+  # pickle database
+
+  cache_size = 10000
+
+  # cache_max_age defines the maximum number of seconds that a value will be
+  # kept in the pickle database without being used (read)
+
+  cache_max_age = 86400
+
+  # Every non-global section is treated as a KeePass database with entries
+  # under a top-level "group" which is read recursively.
+
+  [MyOSes]
+
+  # keepassdb is the full path to your KeePass database.
+
+  keepassdb = /home/andres/Database.kdb
+
+  # group is the name of your top-level main group where you store all your
+  # OSes credentials, key entries or groups outside of this groups will be
+  # ignored.
+ 
+  group = OSes
+
+KFC keepassdb requirements
+--------------------------
+
+KFC opens your KeePass file in read-only mode, so you don't need to worry about
+your database being corrupted by KFC. (However, read the disclaimer, and have a
+copy of your KP database elsewhere)
+
+Your KeePass database needs to have a top-level group where you store all your
+subgroups and/or key entries.
+
+For hosts that have normal-user-then-su-to-root access you need an entry with
+"admin" or "Root" credentials, this is currently hardcoded in the fabric recipe.
+
+For hosts that connect to ports different than 22 this simple standard is used.
+The port is read from the URL field in the KeePass DB entry, KFC search for a
+-P and uses the value next to it as remote port, this convention comes from -P
+being the option on Putty to open a session on a different port.
+
+Example URL field on a KeePass DB entry.
+
+  cmd://putty.exe {USERNAME}@{TITLE} -pw {PASSWORD} -P 2223
+
+This serves as a double purpose as I also use this KeePass DB on Windows
+workstations (where by the way KFC also runs) sometimes I just open a Putty
+session by clicking the URL on KeePass program window.
+
+Entry titles which have IP address formats are ignored as I use them to
+differentiate ILOs from OSes.
+
+KFC usages
+----------
+
+ * Just code your task in Fabric format and run your task with the following
+   command, KFC will ask for you KeePass DB master password.
+
+   fab --set os_filter='dbcluster' my_task
+
+   Will run Fabric task "my_task" on every host which hostname matches the
+   "dbcluster" regular expression. The hostname is taken from the KeePass DB
+   entry title.
+
+ * Run arbitrary command against your cluster.
+
+   fab --set os_filter=HP-UX -- uname -a
+
+   Will run "uname -a" across all Linux OSes found in you KeePass DB. KFC will
+   filter any KeePass group name found in the path to the entry.
+
+ * Open a remote shell
+
+   fab --set os_filter=hosta shell
+
+ * Open a remote root shell
+
+   fab --set os_filter=hostb root_shell
+
+KFC limitations and roadmap
+---------------------------
+
+ * Needs "admin" or "Root" user on hosts with no direct root access. Username
+   is hardcoded.
+ * Entry title needs to be not an IP address the regular expression is hardcoded
+ * serverinfo was the previous project name, this class needs to be renamed
+ * cache ussage needs to be explicit
+ * fabfile.py is messy
+
+Feedback
+========
+
+ * Let me know if you find this software useful. Write me an email to
+   andres.via@gmail.com
+
+Thanks
+======
+
+ * This software will be nothing without all the great software libraries that
+   it uses.
 

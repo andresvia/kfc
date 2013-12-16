@@ -13,7 +13,7 @@ import ConfigParser as configparser
 from lib import keepass as kp
 from lib import cache
 
-appname = 'serverinfo'
+appname = 'kfc'
 
 configdir = os.path.join(os.path.expanduser('~'), "%s" % appname)
 
