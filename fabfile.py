@@ -482,6 +482,10 @@ def get_dates():
                                ntp_conf, cron_ntp_conf]))
 
 @task
+def find_core():
+    su("find / -name core -a -type f -exec ls -lh '{}' \; | tee")
+
+@task
 @runs_once
 def print_dates():
    for date in all_dates:
