@@ -482,12 +482,18 @@ def get_dates():
                                ntp_conf, cron_ntp_conf]))
 
 @task
-def find_core():
-    su("find / -name core -a -type f -exec ls -lh '{}' \; | tee")
-
-@task
 @runs_once
 def print_dates():
    for date in all_dates:
        print(date)
+
+@task
+def find_core():
+    run("date")
+    su("time find / \! -local -prune -o \( -name core -a -type f \) -exec ls -lh '{}' \; | tee")
+    run("date")
+
+@task
+def find_funky_tasks():
+    su("crontab -l | grep -i sh", warn_only=True)
 
