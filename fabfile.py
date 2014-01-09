@@ -9,17 +9,21 @@ import re
 import serverinfo
 import os
 import json
+import time
 
 from fabric.api import (task, env, open_shell,
                         settings, run, hide,
-                        put, runs_once, execute, local)
+                        runs_once, execute)
 from fab import server
 from fab import operations
+from lib import util
+from lib import unix
 
 servers = server.Server(serverinfo.oses)
 op = operations.Operations(servers.access_dict)
 su = op.su
 
+report = util.xlist()
 
 ### new generation ###
 
@@ -29,6 +33,52 @@ su = op.su
 def invoke_create_server_json():
     execute(create_server_json)
     serverinfo.server_info_cache.save()
+
+
+###
+### This function sets the time on the remote hosts the same as the time on
+### the hosts running fabric.
+###
+### This function is useful on hosts where ntp is not installed or where
+### misconfiguration of TZ makes ntpdate unusable.
+###
+@task
+def set_date_as_local():
+    su("echo")  # command executed initialize the connection
+    t0 = time.time()
+    su("echo")  # command executed to measure time correction
+    t1 = time.time()
+    correction = t1 - t0
+    set_date = time.time() + correction
+    set_date = time.localtime(set_date)
+    exec_command = "date %02d%02d%02d%02d%4d.%02d" % (set_date.tm_mon,
+                                                      set_date.tm_mday,
+                                                      set_date.tm_hour,
+                                                      set_date.tm_min,
+                                                      set_date.tm_year,
+                                                      set_date.tm_sec)
+    su(exec_command)
+
+
+### not perfect but useful for some tasks
+@task
+def shell():
+    open_shell()
+
+
+### not perfect but useful for some tasks
+@task
+def root_shell():
+    old_remote_interrupt = env.remote_interrupt
+    env.remote_interrupt = True
+    su("sh")
+    env.remote_innterrupt = old_remote_interrupt
+
+
+### test if I can root
+@task
+def test_root():
+    su("id")
 
 
 def create_server_json():
@@ -46,11 +96,11 @@ def create_server_json():
 def create_server_dict():
     server_dict = {}
     properties = ['name', 'os_type', 'hostname', 'uname', 'virtinfo']
+    # future: guestinfo, serial, os_revision
     properties.sort()
     for prop in properties:
         get_function = globals()['get_' + prop]
         server_dict[prop] = get_function()
-    #server_json['serial'] = get_serial()
     return server_dict
 
 
@@ -65,45 +115,42 @@ def get_name():
 
 
 def get_os_type():
-    os_type = get_cached_result('os_type')
+    os_type = _get_cached_result('os_type')
     if os_type is None:
         with settings(hide('running', 'stdout', 'debug')):
             os_type = run('uname')
-        save_cached_result('os_type', os_type)
+        _save_cached_result('os_type', os_type)
     return(os_type)
 
 
 def get_hostname():
-    hostname = get_cached_result('hostname')
+    hostname = _get_cached_result('hostname')
     if hostname is None:
         with settings(hide('running', 'stdout', 'debug')):
             hostname = run('hostname')
-        save_cached_result('hostname', hostname)
+        _save_cached_result('hostname', hostname)
     return(hostname)
 
 
 def get_uname():
-    uname = get_cached_result('uname')
+    uname = _get_cached_result('uname')
     if uname is None:
         with settings(hide('running', 'stdout', 'debug')):
             uname = run('uname -a')
-        save_cached_result('uname', uname)
+        _save_cached_result('uname', uname)
     return(uname)
 
 
 def get_virtinfo():
-    virtinfo = get_cached_result('virtinfo')
+    virtinfo = _get_cached_result('virtinfo')
     if virtinfo is None:
-        virtinfo_binary = get_virtinfo_binary()
+        virtinfo_binary = _get_virtinfo_binary()
         if virtinfo_binary is not None:
             command_prefix = "command"
             virtinfo = su("echo @%s@ ; %s" % (command_prefix, virtinfo_binary))
-            virtinfo = get_command_output(virtinfo, command_prefix)
-        save_cached_result('virtinfo', virtinfo)
+            virtinfo = _get_command_output(virtinfo, command_prefix)
+        _save_cached_result('virtinfo', virtinfo)
     return(virtinfo)
-
-
-### def get_guestinfo():
 
 
 ### end basic functions ###
@@ -112,7 +159,7 @@ def get_virtinfo():
 ### supporting functions ###
 
 
-def get_cached_result(key):
+def _get_cached_result(key):
     cget = serverinfo.server_info_cache.cache_get
     cached_content = cget(key + '@' + env.host_string)
     if cached_content is not None:
@@ -121,17 +168,17 @@ def get_cached_result(key):
         return None
 
 
-def save_cached_result(key, content):
+def _save_cached_result(key, content):
     cput = serverinfo.server_info_cache.cache_put
     return cput(key + '@' + env.host_string, content)
 
 
 ###
-### Running a command with su, generates login output garbage, this function
+### su -, generates login output garbage, this function
 ### strip-out this garbage searching for the start of the commands execution
-### if the su command was prefixed with "@command_prefix"
+### if the su - command was prefixed with "@command_prefix@"
 ###
-def get_command_output(command_result, command_prefix):
+def _get_command_output(command_result, command_prefix):
     command_output_splitlines = []
     command_found = False
     for output_line in command_result.splitlines():
@@ -139,7 +186,9 @@ def get_command_output(command_result, command_prefix):
             command_output_splitlines.append(output_line)
         if(output_line == "@%s@" % command_prefix):
             command_found = True
-    return '\n'.join(command_output_splitlines)
+    ret = util.xstr('\n'.join(command_output_splitlines))
+    ret.succeeded = command_result.succeeded
+    return ret
 
 
 def executable_found(list_of_execs):
@@ -150,7 +199,7 @@ def executable_found(list_of_execs):
     return "echo No executable found."
 
 
-def get_virtinfo_binary():
+def _get_virtinfo_binary():
     SunOS_virtinfo_binaries = []
     SunOS_virtinfo_binaries.append("/usr/sbin/virtinfo")
     Linux_virtinfo_binaries = []
@@ -162,283 +211,163 @@ def get_virtinfo_binary():
 ### end supporting functions ###
 
 
+### reporting support functions ###
+
+
+###
+### Prints previously generated report in a tab separated values form
+### by default, but you can change this behavior by invoking print_report
+### with other values
+###
 @task
-def print_access():
-    print("%s %s" % (servers.access_dict[env.host_string].host_string.unsafe,
-                     servers.access_dict[env.host_string].host))
-    print("%s %s" % (servers.access_dict[env.host_string].su_host_string.unsafe,
-                     servers.access_dict[env.host_string].host))
+@runs_once
+def print_report(header='1', sort='0', separator='\t', vseparator='\n'):
+    print(gen_report(header, sort, separator, vseparator))
+    serverinfo.server_info_cache.save()
 
 
+###
+### Generates by default file kfc_report.tsv in the current directory
+### you can change the default report_path to create the report in a diferent
+### directory or with another report name.
+###
 @task
-def get_hba_info():
-    su("/usr/sbin/fcinfo hba-port", warn_only=True)
+@runs_once
+def save_report(header='1', sort='1', separator='\t', vseparator='\n',
+                report_path='kfc_report.tsv', launch='0'):
+    open(report_path, 'w').write(gen_report(header,
+                                            sort,
+                                            separator,
+                                            vseparator))
+    if (launch == '1'):
+        util.open_file(report_path)
+    serverinfo.server_info_cache.save()
 
 
+###
+### Function which do the heavy work of generating a report
+###
+def gen_report(header, sort, separator, vseparator):
+    if (sort == '1'):
+        report.sort()
+    if header == '1':
+        report.insert(0, report.header)
+    return(vseparator.join([separator.join(x) for x in report]))
+
+
+### end reporting support functions ###
+
+
+### report building functions ###
+
+###
+### These functions build the "report" variable with information which can be
+### later print_report'd or save_report'd.
+###
+### For example:
+###
+### fab build_access_report \
+###   save_report:separator=';':report_path=/tmp/host_strings.csv
+###
+### First build the report then save the report to /tmp/host_strings.csv
+###
+
+###
+### Builds a report of access to the hosts. Can be used to generate a list
+### of hosts for later use with another tools that understand host_string
+### format. The unsafe version of the list includes the password, the function
+### can be instructed to build the login access or the su access.
+###
 @task
-def get_uptime_info():
-    su("echo @@uptime@@ ; uptime")
+def build_access_report(login='1', unsafe='0', servername='0'):
+    server_object = servers.access_dict[env.host_string]
 
+    unsafe_login_hoststring = server_object.host_string.unsafe
+    unsafe_su_hoststring = server_object.su_host_string.unsafe
+    login_hoststring = server_object.host_string
+    su_hoststring = server_object.su_host_string
 
-@task
-def get_uname_info():
-    su("echo @@uname@@ ; uname -a")
+    no_header = False
+    if not hasattr(report, 'header'):
+        no_header = True
 
+    report_row = []
+    if no_header:
+        report_header = []
 
-@task
-def shell():
-    open_shell()
+    if servername == '1':
+        if no_header:
+            report_header.append('server_name')
+        report_row.append(get_name())
 
+    if no_header:
+        report_header.append('host_string')
 
-@task
-def get_pass_param():
-    admin_users = ["admin", "Root", "root"]
-    admin_users = get_existing_users(admin_users)
-    with settings(hide('stderr'), hide('stdout'), hide("running")):
-        uname = run("uname -a")
-    if re.match(".*SunOS.*", uname):
-        get_pass_param_solaris(admin_users)
-    if re.match(".*Linux.*", uname):
-        get_pass_param_linux(admin_users)
-    if re.match(".*HP-UX.*", uname):
-        get_pass_param_hpux(admin_users)
-
-
-def get_existing_users(user_list):
-    existing_users = []
-    for user in user_list:
-        with settings(hide('stderr', 'stdout', 'running', 'warnings'),
-                      warn_only=True):
-            idux = run("id %s" % user)
-            if idux.succeeded:
-                existing_users.append(user)
-    return existing_users
-
-
-def get_pass_param_solaris(admin_users):
-    password_age_commands = ""
-    for admin_user in admin_users:
-        password_age_commands += " passwd -s %s ; " % admin_user
-    su("egrep "
-       "'^(MAXWEEKS|PASSLENGTH|HISTORY|RETRIES|LOCK_AFTER_RETRIES)' "
-       "/etc/default/passwd "
-       "/etc/default/login "
-       "/etc/security/policy.conf ; "
-       "crontab -l | grep passwd ; "
-       "%s" % password_age_commands)
-
-
-def get_pass_param_hpux(admin_users):
-    password_age_commands = ""
-    for admin_user in admin_users:
-        password_age_commands += " passwd -s %s ; " % admin_user
-    su("egrep "
-       "'^(MIN_PASSWORD_LENGTH|PASSWORD_HISTORY_DEPTH|PASSWORD_MAXDAYS|"
-       "AUTH_MAXTRIES)|u_life|u_maxtries' "
-       "/etc/default/security "
-       "/tcb/files/auth/system/default 2>/dev/null ; "
-       "crontab -l | egrep 'modprpw|userdbset' ; "
-       "%s" % password_age_commands)
-
-
-def get_pass_param_linux(admin_users):
-    password_age_commands = ""
-    for admin_user in admin_users:
-        password_age_commands += " echo chage %s ; " % admin_user
-        password_age_commands += " chage -l %s ; " % admin_user
-    su("egrep "
-       "'^(PASS_MAX_DAYS|PASS_MIN_LEN)' /etc/login.defs ; "
-       "egrep -n "
-       "'pam_tally.so|remember|pam_faillock.so' "
-       "/etc/pam.d/system-auth /etc/pam.d/password-auth 2>/dev/null ; "
-       "crontab -l | egrep 'faillog|faillock' ; "
-       "%s" % password_age_commands)
-
-
-@task
-def get_format():
-    su("format < /dev/null ; true")
-
-
-@task
-def get_multipathll():
-    su("multipath -ll ; true")
-
-
-@task
-def root_shell():
-    old_remote_interrupt = env.remote_interrupt
-    env.remote_interrupt = True
-    su("sh")
-    env.remote_innterrupt = old_remote_interrupt
-
-
-@task
-def copy_scripts():
-    put("scripts/change_passwd_params_solaris.sh", "/tmp", mode=0x755)
-
-
-@task
-def set_rackt_value(param_name):
-    os_family = get_os_family()
-    if (param_name == "RAM (MB)"):
-        if (os_family == "Linux"):
-            with settings(hide('stderr'), hide('stdout'), hide("running")):
-                total_mem = run("free -m")
-            total_mem = total_mem.splitlines()[1].split()[1]
-    print(total_mem)
-
-
-@task
-def create_server_yaml():
-    hostname = run("hostname")
-    dmidecode = su("dmidecode ; true")
-    productname = ""
-    serialnumber = ""
-    for i in dmidecode.splitlines():
-        a = i.split()
-        if len(a) >= 2:
-            if a[0] == "Product" and a[1] == "Name:" and productname == "":
-                productname = " ".join(a[2:])
-            if a[0] == "Serial" and a[1] == "Number:" and serialnumber == "":
-                serialnumber = " ".join(a[2:])
-    operatingsystem = run("cat /etc/redhat-release")
-    yaml = open("yamls" + os.sep + hostname + ".yaml", "w")
-    yaml.write("--- " + hostname + "\n")
-    yaml.write("name: " + hostname + "\n")
-    yaml.write("parameters:\n")
-    yaml.write("  fqdn: " + hostname + "\n")
-    yaml.write("  productname: " + productname + "\n")
-    yaml.write("  serialnumber: " + serialnumber + "\n")
-    yaml.write("  uuid:\n")
-    yaml.write("  operatingsystem: " + operatingsystem + "\n")
-    yaml.write("  operatingsystemrelease:\n")
-    yaml.write("  hypervisor: No\n")
-    yaml.close()
-
-
-def get_os_family():
-    with settings(hide('stderr'), hide('stdout'), hide("running")):
-        uname = run("uname")
-    if re.match(".*SunOS.*", uname):
-        os_family = "SunOS"
-    elif re.match(".*Linux.*", uname):
-        os_family = "Linux"
-    elif re.match(".*HP-UX.*", uname):
-        os_family = "HP-UX"
+    if login == '1':
+        if unsafe == '1':
+            srvstr = unsafe_login_hoststring
+        else:
+            srvstr = login_hoststring
     else:
-        os_family = "Unknown"
-    return os_family
+        if unsafe == '1':
+            srvstr = unsafe_su_hoststring
+        else:
+            srvstr = su_hoststring
+    report_row.append(srvstr)
+    report.append(report_row)
+    if no_header:
+        report.header = report_header
 
 
+###
+### Builds a report of time and ntp configuration on the host. Can be used to
+### check time configuration in a number of hosts, what is checked is:
+### time where fabric runs, time on the remote host (both in ISO and epoch
+### format), time diff between them,
+### check how many ntpd process are running, check how many ntpd services are
+### available, check how many ntpd services are enabled, check "server"
+### parameter in ntp.conf file, check ntpdate <address> in root crontab.
+###
+### With this report you can plan what changes need to be done on which servers
+### and check the time and ntp configuration on hosts.
+###
 @task
-def revision():
-    print("@revision@")
-    run("cat /etc/redhat-release")
+def build_ntp_report():
+    if not hasattr(report, 'header'):
+        report.header = ["hostname", "time ntp", "time srv", "epoch ntp",
+                         "epoch srv", "diff", "ntpd running", "ntpd svc avail",
+                         "ntpd svc enable", "conf", "cron conf"]
 
-
-def is_number(s):
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
-
-@task
-def get_virtinfo_():
-    zones = su("echo @zoneadm@;/usr/sbin/zoneadm list -vc", warn_only=True)
-    virtinfo = su("echo @virtinfo@;/usr/sbin/virtinfo", warn_only=True)
-    ldoms = su("echo @ldm@;/usr/sbin/ldm list", warn_only=True)
-
-    zones_splitlines = []
-    command_found = False
-    for zoneadm_line in zones.splitlines():
-        if command_found:
-            zones_splitlines.append(zoneadm_line)
-        if(zoneadm_line == "@zoneadm@"):
-            command_found = True
-
-    result_zones = []
-    if zones.succeeded:
-        for zone in zones_splitlines:
-            zone = zone.split()
-            if len(zone) >= 2:
-                if(is_number(zone[0])):
-                    result_zones.append(zone[1])
-
-    virtinfo_splitlines = []
-    command_found = False
-    for virtinfo_line in virtinfo.splitlines():
-        if command_found:
-            virtinfo_splitlines.append(virtinfo_line)
-        if(virtinfo_line == "@virtinfo@"):
-            command_found = True
-
-    result_virtinfo = ""
-
-    if virtinfo.succeeded:
-        result_virtinfo = " ".join(virtinfo_splitlines)
-
-    ldm_splitlines = []
-    command_found = False
-    for ldm_line in ldoms.splitlines():
-        if command_found:
-            ldm_splitlines.append(ldm_line)
-        if(ldm_line == "@ldm@"):
-            command_found = True
-
-    result_ldm = []
-    if ldoms.succeeded:
-        for ldm in ldm_splitlines[1:]:
-            if len(ldm.split()) >= 1:
-                result_ldm.append(ldm.split()[0])
-
-    print("virtinfo:%s:%s:%s:%s" % (env.host,
-                                    ", ".join(result_zones).replace(":", ""),
-                                    result_virtinfo.replace(":", ""),
-                                    ", ".join(result_ldm).replace(":", "")))
-
-
-
-
-#def get_serial():
-
-import time
-import sys
-
-all_dates = []
-
-all_dates.append(";".join(["hostname", "hora ntp", "hora srv", "epoch ntp",
-                 "epoch srv", "diff", "ntpd running", "ntpd svc av",
-                 "ntpd svc en", "conf", "cron conf"]))
-
-@task
-def get_dates():
     with settings(hide('running', 'stdout', 'debug')):
-        remote_time = run("LC_MESSAGES=C;export LC_MESSAGES;LC_ALL=C;export LC_ALL;LANG=C;export LANG;date")
-    remote_time = remote_time.replace(' COT', '')
-    remote_time = remote_time.replace(' GMT-5', '')
-    remote_time = remote_time.replace(' SAT', '')
+        remote_time = run("%sdate" % unix.unlang)
+
+    remote_time = re.sub("\s+[A-Z]{3}(-[0-9]{1,2})?\s*", " ", remote_time)
+
+    remote_time = re.sub('\s+0([0-9]+)\s+', ' \\1 ', remote_time)
+    remote_time = ' '.join(remote_time.split())
     local_time = time.asctime()
     remote_time_int = time.mktime(time.strptime(remote_time))
     local_time_int = time.mktime(time.strptime(local_time))
-    remote_time_a = time.strftime("%a %b %d %H:%M:%S %Y",time.localtime(remote_time_int))
-    if (remote_time != remote_time_a):
-        print("Algo malo paso")
-        sys.exit(1)
+    remote_time_a = time.strftime("%a %b %d %H:%M:%S %Y",
+                                  time.localtime(remote_time_int))
+    remote_time_a = re.sub('\s+0([0-9]+)\s+', ' \\1 ', remote_time_a)
+    assert remote_time == remote_time_a
     time_diff = remote_time_int - local_time_int
     os_type = get_os_type()
     with settings(hide('running', 'stdout', 'debug')):
         ntpd = run("pgrep ntpd | wc -l")
     ntp_conf = "None"
     cron_ntp_conf = "None"
-    crontab = su("crontab -l | grep ntpdate", warn_only=True)
+    command_prefix = "command"
+    crontab = su("echo @%s@ ; crontab -l | grep ntpdate" % command_prefix,
+                 warn_only=True)
+    crontab = _get_command_output(crontab, command_prefix)
     if os_type == "Linux":
         with settings(hide('running', 'stdout', 'debug')):
             run("/sbin/chkconfig --list")
             ntpd_svc_n = run("/sbin/chkconfig --list|grep -i 'ntp'|wc -l")
-            ntpd_svc = run("/sbin/chkconfig --list|egrep -i 'ntp.*[234]:on'|wc -l")
+            ntpd_svc = run("/sbin/chkconfig --list|"
+                           "egrep -i 'ntp.*[234]:on'|wc -l")
             if run("test -f /etc/ntp.conf", warn_only=True).succeeded:
                 ntp_conf = run("cat /etc/ntp.conf")
     elif os_type == "SunOS":
@@ -469,31 +398,36 @@ def get_dates():
             if line[0][0] == "#":
                 continue
             else:
-                for j in range(6,len(line)):
+                for j in range(6, len(line)):
                     if len(line[j]) >= 7 and line[j][0] != '-':
                         cron_ntp_srv.append(line[j])
     if ntp_conf != "None":
         ntp_conf = " ".join(ntp_srv)
     if crontab.succeeded:
         cron_ntp_conf = " ".join(cron_ntp_srv)
-    all_dates.append(";".join([get_name(), local_time, remote_time,
-                               str(local_time_int), str(remote_time_int), str(time_diff),
-                               str(ntpd), str(ntpd_svc_n), str(ntpd_svc),
-                               ntp_conf, cron_ntp_conf]))
+    report.append([get_name(), local_time, remote_time, str(local_time_int),
+                  str(remote_time_int), str(time_diff), str(ntpd),
+                  str(ntpd_svc_n), str(ntpd_svc), ntp_conf, cron_ntp_conf])
 
+
+###
+### Builds a report for uptime stats
+###
 @task
-@runs_once
-def print_dates():
-   for date in all_dates:
-       print(date)
+def build_uptime_report():
+    if not hasattr(report, 'header'):
+        report.header = ["hostname", "uptime"]
 
-@task
-def find_core():
-    run("date")
-    su("time find / \! -local -prune -o \( -name core -a -type f \) -exec ls -lh '{}' \; | tee")
-    run("date")
+    with settings(hide('running', 'stdout', 'debug')):
+        uptime = run("%suptime" % unix.unlang)
 
-@task
-def find_funky_tasks():
-    su("crontab -l | grep -i sh", warn_only=True)
+    uptime = uptime.split(',')
+    if len(uptime) >= 6:
+        days = uptime[0]
+    else:
+        days = "up 0 days"
+    days = re.search("\s+up\s+([0-9]+)\s+day", days).groups()[0]
+    report.append([get_name(), days])
 
+
+### end report building functions ###

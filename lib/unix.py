@@ -10,6 +10,10 @@ from __future__ import absolute_import
 from . import util
 from . import keepass
 
+unlang = ("LC_MESSAGES=C;export LC_MESSAGES;"
+          "LC_ALL=C;export LC_ALL;"
+          "LANG=C;export LANG;")
+
 
 class access_object(object):
     def __init__(self):
@@ -49,8 +53,8 @@ def build_unix_su_command(username):
         username = ""
     else:
         username = " " + str(username)
-    return util.xstr("LC_MESSAGES=C;export LC_MESSAGES;%s%s -c" %
-                     (su_cmnd, username))
+    return util.xstr("%s%s%s -c" %
+                     (unlang, su_cmnd, username))
 
 
 def get_os_access_object(os_access_pair):

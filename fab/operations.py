@@ -19,8 +19,10 @@ class Operations(object):
         wo = warn_only
         with settings(hide('running', 'stdout', 'debug'), use_shell=use_shell,
                       warn_only=wo):
-            run("echo")
+            uname = run("uname")
         su_command = self.access_dict[env.host_string].su_command
+        if uname == "HP-UX":
+            su_command = su_command.replace('su -', 'su')
         su_password = self.access_dict[env.host_string].su_password
         old_password = "%s" % env.passwords[env.host_string]
         env.passwords[env.host_string] = su_password
