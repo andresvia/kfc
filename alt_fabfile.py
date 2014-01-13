@@ -17,7 +17,8 @@ import serverinfo
 import os
 
 from fabric.api import (task, env, put,
-                        settings, run, hide)
+                        settings, run, hide,
+                        runs_once)
 from fab import server
 from fab import operations
 from lib import util
@@ -26,6 +27,7 @@ servers = server.Server(serverinfo.oses)
 op = operations.Operations(servers.access_dict)
 su = op.su
 
+report = util.xlist()
 
 def get_name():
     return re.split('[@:]', env.host_string)[1]
@@ -304,3 +306,57 @@ sort -u
     f = open("/tmp/hbas/%s" % name, "w")
     f.write(result)
     f.close()
+
+
+@task
+@runs_once
+def print_report(header='1', sort='0', separator='\t', vseparator='\n'):
+    print(gen_report(header, sort, separator, vseparator))
+    serverinfo.server_info_cache.save()
+
+
+def gen_report(header, sort, separator, vseparator):
+    if (sort == '1'):
+        report.sort()
+    if header == '1':
+        report.insert(0, report.header)
+    return(vseparator.join([separator.join(x) for x in report]))
+
+
+@task
+def solaris_virtinfo():
+    report.header = ['hostname', 'virtinfo']
+    command_prefix = "command"
+
+    localscript = """
+
+[ -e /usr/sbin/zoneadm ] && /usr/sbin/zoneadm list -v |
+awk 'BEGIN{printf("Zones: ")}NR>=2{printf("%s ", $2)}END{printf("\\n")}'
+
+[ -e /usr/sbin/virtinfo ] && echo "virtinfo: $(/usr/sbin/virtinfo)"
+
+[ -e /usr/sbin/ldm ] && /usr/sbin/ldm list |
+awk 'BEGIN{printf("LDOMS: ")}NR>=2{printf("%s ", $1)}END{printf("\\n")}'
+"""
+
+    f = open("/tmp/.kfc_solaris_virtinfo", "w")
+    f.write(localscript)
+    f.close()
+
+    name = get_name()
+
+    script = run("mktemp")
+
+    put("/tmp/.kfc_solaris_virtinfo", script)
+
+    result = su("echo @%s@ ; bash %s | tee" % (command_prefix, script))
+    result = _get_command_output(result, command_prefix)
+
+    run("rm %s" % script)
+
+    #f = open("/tmp/hbas/%s" % name, "w")
+    #f.write(result)
+    #f.close()
+    result = result.replace('\n','\\n').replace('\t','\\t')
+    report.append([get_name(), result])
+
