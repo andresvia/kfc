@@ -29,6 +29,7 @@ su = op.su
 
 report = util.xlist()
 
+
 def get_name():
     return re.split('[@:]', env.host_string)[1]
 
@@ -343,8 +344,6 @@ awk 'BEGIN{printf("LDOMS: ")}NR>=2{printf("%s ", $1)}END{printf("\\n")}'
     f.write(localscript)
     f.close()
 
-    name = get_name()
-
     script = run("mktemp")
 
     put("/tmp/.kfc_solaris_virtinfo", script)
@@ -357,6 +356,5 @@ awk 'BEGIN{printf("LDOMS: ")}NR>=2{printf("%s ", $1)}END{printf("\\n")}'
     #f = open("/tmp/hbas/%s" % name, "w")
     #f.write(result)
     #f.close()
-    result = result.replace('\n','\\n').replace('\t','\\t')
+    result = result.replace('\n', '\\n').replace('\t', '\\t')
     report.append([get_name(), result])
-

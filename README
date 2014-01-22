@@ -95,9 +95,9 @@ to this one.
   keepassdb = /home/andres/Database.kdb
 
   # group is the name of your top-level main group where you store all your
-  # OSes credentials, key entries or groups outside of this groups will be
+  # OSes credentials, key entries or groups outside of this group will be
   # ignored.
- 
+
   group = OSes
 
 KFC keepassdb requirements

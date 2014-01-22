@@ -4,12 +4,16 @@
 from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
+from __future__ import unicode_literals
 
 import re
 import serverinfo
 import os
 import json
 import time
+import xlsxwriter
+import tempfile
+import codecs
 
 from fabric.api import (task, env, open_shell,
                         settings, run, hide,
@@ -227,20 +231,62 @@ def print_report(header='1', sort='0', separator='\t', vseparator='\n'):
 
 
 ###
-### Generates by default file kfc_report.tsv in the current directory
+### Generates by default a temp file
 ### you can change the default report_path to create the report in a diferent
 ### directory or with another report name.
 ###
 @task
 @runs_once
 def save_report(header='1', sort='1', separator='\t', vseparator='\n',
-                report_path='kfc_report.tsv', launch='0'):
-    open(report_path, 'w').write(gen_report(header,
-                                            sort,
-                                            separator,
-                                            vseparator))
+                report_path=None, launch='0'):
+    if report_path is None:
+        report_path = tempfile.mktemp('.tsv')
+    codecs.open(report_path,
+                mode='w',
+                encoding='utf-8').write(gen_report(header,
+                                                   sort,
+                                                   separator,
+                                                   vseparator))
     if (launch == '1'):
         util.open_file(report_path)
+    else:
+        print("%s generated" % report_path)
+    serverinfo.server_info_cache.save()
+
+
+###
+### Generates by default a temp xlsx file wich can be changed with report_path
+###
+@task
+@runs_once
+def xlsx_report(header='1', sort='1', report_path=None,
+                launch='1'):
+    if report_path is None:
+        report_path = tempfile.mktemp('.xlsx')
+    workbook = xlsxwriter.Workbook(report_path)
+    worksheet = workbook.add_worksheet()
+    col = 0
+    row = 0
+    bold = workbook.add_format({'bold': True})
+    if sort == '1':
+        report.sort()
+    if header == '1':
+        for column_title in report.header:
+            worksheet.write(row, col, column_title, bold)
+            col += 1
+        col = 0
+        row += 1
+    for report_row in report:
+        for report_cell in report_row:
+            worksheet.write(row, col, report_cell)
+            col += 1
+        col = 0
+        row += 1
+    workbook.close()
+    if (launch == '1'):
+        util.open_file(report_path)
+    else:
+        print("%s generated" % report_path)
     serverinfo.server_info_cache.save()
 
 
@@ -252,6 +298,17 @@ def gen_report(header, sort, separator, vseparator):
         report.sort()
     if header == '1':
         report.insert(0, report.header)
+    sep = '\u21e5'  # tab
+    vsep = '\u00b6'  # pilcrow
+    for i in range(len(report)):
+        for j in range(len(report[i])):
+            # replace non-unix line terminations
+            cell = report[i][j].replace('\r\n', '\n')
+            cell = cell.replace('\n\r', '\n')
+            cell = cell.replace('\r', '\n')
+            cell = cell.replace(separator, sep)
+            cell = cell.replace(vseparator, vsep)
+            report[i][j] = cell
     return(vseparator.join([separator.join(x) for x in report]))
 
 
@@ -355,12 +412,16 @@ def build_ntp_report():
     time_diff = remote_time_int - local_time_int
     os_type = get_os_type()
     with settings(hide('running', 'stdout', 'debug')):
-        ntpd = run("pgrep ntpd | wc -l")
+        if run("uname -r") == "B.11.11":  # HP-UX 11.11 is a funky OS
+            ntpd = run("ps -e | grep ntpd | wc -l")
+        else:
+            ntpd = run("pgrep ntpd | wc -l")
     ntp_conf = "None"
     cron_ntp_conf = "None"
     command_prefix = "command"
-    crontab = su("echo @%s@ ; crontab -l | grep ntpdate" % command_prefix,
-                 warn_only=True)
+    with settings(hide('running', 'stdout', 'debug')):
+        crontab = su("echo @%s@ ; crontab -l | grep ntpdate" % command_prefix,
+                      warn_only=True)
     crontab = _get_command_output(crontab, command_prefix)
     if os_type == "Linux":
         with settings(hide('running', 'stdout', 'debug')):
@@ -401,6 +462,8 @@ def build_ntp_report():
                 for j in range(6, len(line)):
                     if len(line[j]) >= 7 and line[j][0] != '-':
                         cron_ntp_srv.append(line[j])
+    if len(cron_ntp_srv) == 0:
+        cron_ntp_srv = ["None"]
     if ntp_conf != "None":
         ntp_conf = " ".join(ntp_srv)
     if crontab.succeeded:
@@ -430,4 +493,19 @@ def build_uptime_report():
     report.append([get_name(), days])
 
 
+###
+### Builds a report for uptime stats
+###
+@task
+def build_logic_core_report():
+    if not hasattr(report, 'header'):
+        report.header = ["hostname", "cores"]
+
+    with settings(hide('running', 'stdout', 'debug')):
+        cores = run("/usr/sbin/psrinfo | wc -l | tee")
+
+    report.append([get_name(), str(int(cores))])
+
+
 ### end report building functions ###
+

@@ -24,7 +24,7 @@ class Server(object):
 
         if os_filter == "":
             print("No hay un filtro de SO, establezca un filtro con "
-                  "--set os_filter=filtro o confirme para ejecutar las tareas"
+                  "--set os_filter=filtro o confirme para ejecutar las tareas "
                   "sobre todos los servidores")
             if not confirm("¿Ejecutar las tareas sobre todos los servidores?"):
                 sys.exit(1)
