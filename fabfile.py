@@ -506,6 +506,31 @@ def build_logic_core_report():
 
     report.append([get_name(), str(int(cores))])
 
-
 ### end report building functions ###
+
+### file copy functions ###
+
+###
+### Dumb dir copy, we have no rsync on most servers and most unices dont't have
+### cp -u option
+###
+@task
+def dumb_dir_copy(local_dir, remote_dir, delete_first=False,
+                  change_owner=False, new_owner=None, new_group=None,
+                  change_mode=False, new_mode=None):
+    remote_dir = re.sub('/+', '/', remote_dir)
+    if remote_dir in ['/', '/etc', '/var', '/usr', '/opt', '/sys',
+                      '/tmp', '/proc', '/boot', '/home', '/dev', '/mnt']:
+        print('I will not copy that dir.')
+        return
+    if not remote_dir.startswith('/'):
+        print('I will not copy relative dirs')
+        return
+    if run('test -d %s' % remote_dir).succeeded:
+        print('%s is a a directory')
+    else:
+        print("%s either exists as a file, or can't reach")
+   # wip
+
+### end file copy functions ###
 
