@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# seq
 
 ### assorted,
 ### un-organized,
@@ -8,43 +9,11 @@
 ### to do fast work and requirements
 ### that have no place in fabfile.py
 
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
 
-import re
-import serverinfo
-import os
-
-from fabric.api import (task, env, put,
-                        settings, run, hide,
-                        runs_once)
-from fab import server
-from fab import operations
-from lib import util
-
-servers = server.Server(serverinfo.oses)
-op = operations.Operations(servers.access_dict)
-su = op.su
-
-report = util.xlist()
+execfile('fabfile.py')
 
 
-def get_name():
-    return re.split('[@:]', env.host_string)[1]
-
-
-def _get_command_output(command_result, command_prefix):
-    command_output_splitlines = []
-    command_found = False
-    for output_line in command_result.splitlines():
-        if command_found:
-            command_output_splitlines.append(output_line)
-        if(output_line == "@%s@" % command_prefix):
-            command_found = True
-    ret = util.xstr('\n'.join(command_output_splitlines))
-    ret.succeeded = command_result.succeeded
-    return ret
+from fabric.api import put
 
 
 @task
@@ -358,3 +327,193 @@ awk 'BEGIN{printf("LDOMS: ")}NR>=2{printf("%s ", $1)}END{printf("\\n")}'
     #f.close()
     result = result.replace('\n', '\\n').replace('\t', '\\t')
     report.append([get_name(), result])
+
+
+@task
+def solaris_meminfo():
+    report.header = ['hostname', 'cpuused', 'memused',
+                     'cores', 'memtotal', 'date']
+    command_prefix = "command"
+
+    localscript = """
+
+prstat -t 1 1 < /dev/null | awk '{print $5}' |
+tr -d '%' | awk '{S=S+$0}END{print S}'
+psrinfo | wc -l
+prstat -t 1 1 < /dev/null  | awk '{print $NF}' |
+tr -d '%' | awk '{S=S+$0;A=$0}END{print S-A}'
+prtconf -v 2>/dev/null | grep -i 'Memory size'
+date
+
+"""
+
+    f = open("/tmp/.kfc_solaris_meminfo", "w")
+    f.write(localscript)
+    f.close()
+
+    script = run("mktemp")
+
+    put("/tmp/.kfc_solaris_meminfo", script)
+
+    result = su("echo @%s@ ; bash %s | tee" % (command_prefix, script))
+    result = _get_command_output(result, command_prefix)
+
+    run("rm %s" % script)
+
+    cpuused = result.splitlines()[2]
+    memused = result.splitlines()[0]
+    cores = result.splitlines()[1]
+    memtotal = result.splitlines()[3]
+    date = result.splitlines()[4]
+    report.append([get_name(), cpuused, memused, cores, memtotal, date])
+
+
+@task
+def solaris_mpver():
+    report.header = ['hostname', 'mpver', 'mppaths']
+    command_prefix = "command"
+
+    localscript = """
+
+echo -n 'version mapthadm: ' ; mpathadm -V |grep -i version
+echo -n "number of paths: " ; mpathadm list lu | grep 'Operational Path Count:' | sort -ur | head -1
+
+"""
+
+    f = open("/tmp/.kfc_solaris_mpver", "w")
+    f.write(localscript)
+    f.close()
+
+    script = run("mktemp")
+
+    put("/tmp/.kfc_solaris_mpver", script)
+
+    result = su("echo @%s@ ; bash %s | tee" % (command_prefix, script))
+    result = _get_command_output(result, command_prefix)
+
+    run("rm %s" % script)
+
+    mpver = result.splitlines()[0]
+    mppaths = result.splitlines()[1]
+    report.append([get_name(), mpver, mppaths])
+
+
+@task
+def solaris_volver():
+    report.header = ['hostname', 'ver SUNWvolr svm', 'ver SUNWzfskr zfs', 'ver SUNWmpapir mpio']
+    command_prefix = "command"
+
+    localscript = """
+
+echo -n '1: ' ; pkginfo -l SUNWvolr | grep -i ver
+echo -n "2: " ; pkginfo -l SUNWzfskr | grep -i version
+echo -n '3: ' ; pkginfo -l SUNWmpapir  | grep -i version
+
+"""
+
+    f = open("/tmp/.kfc_solaris_mpver", "w")
+    f.write(localscript)
+    f.close()
+
+    script = run("mktemp")
+
+    put("/tmp/.kfc_solaris_mpver", script)
+
+    result = su("echo @%s@ ; bash %s | tee" % (command_prefix, script))
+    result = _get_command_output(result, command_prefix)
+
+    run("rm %s" % script)
+
+    svmver = result.splitlines()[0]
+    zfsver = result.splitlines()[1]
+    mpiover = result.splitlines()[2]
+    report.append([get_name(), svmver, zfsver, mpiover])
+
+
+@task
+def linux_volver():
+    report.header = ['hostname', 'device-mapper-multipath', 'lvm2', 'e2fsprogs-libs']
+    command_prefix = "command"
+
+    localscript = """
+
+rpm -q -a | egrep '^device-mapper-multipath-' | head -n1 | awk 'BEGIN{printf("")}{print}'
+rpm -q -a | egrep '^lvm2-' | head -n1 | awk 'BEGIN{printf("")}{print}'
+rpm -q -a | egrep '^e2fsprogs-libs-' | head -n1 | awk 'BEGIN{printf("")}{print}'
+
+"""
+
+    f = open("/tmp/.kfc_solaris_mpver", "w")
+    f.write(localscript)
+    f.close()
+
+    script = run("mktemp")
+
+    put("/tmp/.kfc_solaris_mpver", script)
+
+    result = su("echo @%s@ ; bash %s | tee" % (command_prefix, script))
+    result = _get_command_output(result, command_prefix)
+
+    run("rm %s" % script)
+
+    try:
+      svmver = result.splitlines()[0]
+    except:
+      svmver = ""
+    try:
+      zfsver = result.splitlines()[1]
+    except:
+      zfsver = ""
+    try:
+      mpiover = result.splitlines()[2]
+    except:
+      mpiover = ""
+    report.append([get_name(), svmver, zfsver, mpiover])
+
+
+@task
+def build_solaris_report():
+    report.header = ['hostname',
+                     'echo ::memstat|mdb -k',
+                     "echo ::memstat|mdb -k|grep Anon|awk '{print \\$NF}'",
+                     "prtdiag|egrep -i 'mem.*size'",
+                     'dladm show-link',
+                     "fcinfo hba-port|egrep 'HBA Port'",
+                     "fcinfo hba-port|egrep Manufacturer|sort -u",
+                     "virtinfo",
+                     "ldm list|/usr/sfw/bin/ggrep -o primary",
+                     "zoneadm list|grep global",
+                     "ifconfig -a"]
+    command_prefix = "command"
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[1]))
+    memstat = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[2]))
+    memanon = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[3]))
+    memsize = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[4]))
+    links = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[5]))
+    hbas = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[6]))
+    hbamanu = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[7]))
+    virtinfo = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[8]))
+    ldmlist = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[9]))
+    zonelist = _get_command_output(result, command_prefix)
+    result = su("echo @%s@;%s|tee" % (command_prefix, report.header[10]))
+    ifconfig = _get_command_output(result, command_prefix)
+    report.append([get_name(),
+                  memstat,
+                  memanon,
+                  memsize,
+                  links,
+                  hbas,
+                  hbamanu,
+                  virtinfo,
+                  ldmlist,
+                  zonelist,
+                  ifconfig])
+
