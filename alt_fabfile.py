@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 # seq
 
+from __future__ import print_function
+from __future__ import division
+from __future__ import absolute_import
+from __future__ import unicode_literals
+
 ### assorted,
 ### un-organized,
 ### un-portable &
@@ -9,9 +14,24 @@
 ### to do fast work and requirements
 ### that have no place in fabfile.py
 
+exec(compile(open('fabfile.py').read(), 'fabfile.py', 'exec'))
 
-execfile('fabfile.py')
-
+# to avoid error reporting in IDEs
+#lint:disable
+su = su
+task = task
+settings = settings
+hide = hide
+run = run
+re = re
+os = os
+get_name = get_name
+_get_command_output = _get_command_output
+report = report
+env = env
+serverinfo = serverinfo
+unix = unix
+#lint:enable
 
 from fabric.api import put
 
@@ -279,21 +299,6 @@ sort -u
 
 
 @task
-@runs_once
-def print_report(header='1', sort='0', separator='\t', vseparator='\n'):
-    print(gen_report(header, sort, separator, vseparator))
-    serverinfo.server_info_cache.save()
-
-
-def gen_report(header, sort, separator, vseparator):
-    if (sort == '1'):
-        report.sort()
-    if header == '1':
-        report.insert(0, report.header)
-    return(vseparator.join([separator.join(x) for x in report]))
-
-
-@task
 def solaris_virtinfo():
     report.header = ['hostname', 'virtinfo']
     command_prefix = "command"
@@ -325,7 +330,7 @@ awk 'BEGIN{printf("LDOMS: ")}NR>=2{printf("%s ", $1)}END{printf("\\n")}'
     #f = open("/tmp/hbas/%s" % name, "w")
     #f.write(result)
     #f.close()
-    result = result.replace('\n', '\\n').replace('\t', '\\t')
+    #result = result.replace('\n', '\\n').replace('\t', '\\t')
     report.append([get_name(), result])
 
 
@@ -376,7 +381,8 @@ def solaris_mpver():
     localscript = """
 
 echo -n 'version mapthadm: ' ; mpathadm -V |grep -i version
-echo -n "number of paths: " ; mpathadm list lu | grep 'Operational Path Count:' | sort -ur | head -1
+echo -n "number of paths: " ; mpathadm list lu |
+grep 'Operational Path Count:' | sort -ur | head -1
 
 """
 
@@ -400,7 +406,8 @@ echo -n "number of paths: " ; mpathadm list lu | grep 'Operational Path Count:' 
 
 @task
 def solaris_volver():
-    report.header = ['hostname', 'ver SUNWvolr svm', 'ver SUNWzfskr zfs', 'ver SUNWmpapir mpio']
+    report.header = ['hostname', 'ver SUNWvolr svm',
+                     'ver SUNWzfskr zfs', 'ver SUNWmpapir mpio']
     command_prefix = "command"
 
     localscript = """
@@ -432,12 +439,14 @@ echo -n '3: ' ; pkginfo -l SUNWmpapir  | grep -i version
 
 @task
 def linux_volver():
-    report.header = ['hostname', 'device-mapper-multipath', 'lvm2', 'e2fsprogs-libs']
+    report.header = ['hostname', 'device-mapper-multipath',
+                     'lvm2', 'e2fsprogs-libs']
     command_prefix = "command"
 
     localscript = """
 
-rpm -q -a | egrep '^device-mapper-multipath-' | head -n1 | awk 'BEGIN{printf("")}{print}'
+rpm -q -a | egrep '^device-mapper-multipath-' | head -n1 |
+awk 'BEGIN{printf("")}{print}'
 rpm -q -a | egrep '^lvm2-' | head -n1 | awk 'BEGIN{printf("")}{print}'
 rpm -q -a | egrep '^e2fsprogs-libs-' | head -n1 | awk 'BEGIN{printf("")}{print}'
 
@@ -457,17 +466,17 @@ rpm -q -a | egrep '^e2fsprogs-libs-' | head -n1 | awk 'BEGIN{printf("")}{print}'
     run("rm %s" % script)
 
     try:
-      svmver = result.splitlines()[0]
+        svmver = result.splitlines()[0]
     except:
-      svmver = ""
+        svmver = ""
     try:
-      zfsver = result.splitlines()[1]
+        zfsver = result.splitlines()[1]
     except:
-      zfsver = ""
+        zfsver = ""
     try:
-      mpiover = result.splitlines()[2]
+        mpiover = result.splitlines()[2]
     except:
-      mpiover = ""
+        mpiover = ""
     report.append([get_name(), svmver, zfsver, mpiover])
 
 
@@ -517,3 +526,47 @@ def build_solaris_report():
                   zonelist,
                   ifconfig])
 
+
+@task
+def build_logic_core_count_report():
+    if not hasattr(report, 'header'):
+        report.header = ["hostname", "logic cores"]
+
+    with settings(hide('running', 'stdout', 'debug')):
+        uname = run('uname')
+        if uname == "Linux":
+            cores = run("egrep -c '^processor[[:space:]]*:[[:space:]]+' "
+                        "/proc/cpuinfo")
+        elif uname == "SunOS":
+            cores = run("/usr/sbin/psrinfo | wc -l | tee")
+    cores = str(int(cores))
+    report.append([get_name(), cores])
+
+
+@task
+def build_current_memory_usage():
+    if not hasattr(report, 'header'):
+        report.header = ["hostname", "mem usage"]
+    with settings(hide('running', 'stdout', 'debug')):
+        uname = run('uname')
+        if uname == "Linux":
+            curmem = run("%sfree | awk 'NR==3{print $3}'" % unix.unlang)
+            totmem = run("%sfree | awk 'NR==2{print $2}'" % unix.unlang)
+            curmem = int(curmem) / int(totmem)
+        elif uname == "SunOS":
+            curmem = run("%sprstat -t 1 1 < /dev/null |" % unix.unlang
+                         + "tr -d '%' |"
+                         "awk '{M=M+$5}END{print M}'")
+            curmem = float(curmem) / 100
+            if curmem > 1:
+                print("%s Memory overhead" % get_name())
+                mdb = su("echo ::memstat | mdb -k")
+                for line in mdb.splitlines():
+                    line = line.split()
+                    try:
+                        if line[0] == "Anon":
+                            curmem = line[3].replace("%", "")
+                            curmem = float(curmem) / 100
+                    except:
+                        pass
+    report.append([get_name(), curmem])

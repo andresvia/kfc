@@ -16,8 +16,8 @@ import tempfile
 import codecs
 
 from fabric.api import (task, env, open_shell,
-                        settings, run, hide,
-                        runs_once, execute)
+                        settings, run, hide, lcd,
+                        runs_once, execute, put)
 from fab import server
 from fab import operations
 from lib import util
@@ -492,45 +492,64 @@ def build_uptime_report():
     days = re.search("\s+up\s+([0-9]+)\s+day", days).groups()[0]
     report.append([get_name(), days])
 
-
-###
-### Builds a report for uptime stats
-###
-@task
-def build_logic_core_report():
-    if not hasattr(report, 'header'):
-        report.header = ["hostname", "cores"]
-
-    with settings(hide('running', 'stdout', 'debug')):
-        cores = run("/usr/sbin/psrinfo | wc -l | tee")
-
-    report.append([get_name(), str(int(cores))])
-
 ### end report building functions ###
 
 ### file copy functions ###
 
+
 ###
 ### Dumb dir copy, we have no rsync on most servers and most unices dont't have
-### cp -u option
+### cp -u option. This function do some stupid things we are allowing only
+### some inputs to avoid havok. mktemp -p on some HP-UX OSes does not create
+### the directory, so this function will only work on Linux or SunOS so far.
 ###
 @task
 def dumb_dir_copy(local_dir, remote_dir, delete_first=False,
-                  change_owner=False, new_owner=None, new_group=None,
-                  change_mode=False, new_mode=None):
-    remote_dir = re.sub('/+', '/', remote_dir)
+                  as_root=False):
+    remote_dir = re.sub('/+', '/', remote_dir.strip())
     if remote_dir in ['/', '/etc', '/var', '/usr', '/opt', '/sys',
                       '/tmp', '/proc', '/boot', '/home', '/dev', '/mnt']:
-        print('I will not copy that dir.')
+        print('I will not copy to that dir.')
         return
     if not remote_dir.startswith('/'):
-        print('I will not copy relative dirs')
+        print('I will not copy to relative dirs.')
         return
-    if run('test -d %s' % remote_dir).succeeded:
-        print('%s is a a directory')
+    if remote_dir.count(' ') > 0:
+        print("I can't copy to that dir.")
+        return
+    if remote_dir == '':
+        print("I will not copy to no dir.")
+        return
+    uname = run("uname")
+    if uname not in ["Linux", "SunOS"]:
+        print("Only works on selected OSes.")
+    remote_exists = run('test -d %s' % remote_dir, warn_only=True).succeeded
+    if remote_exists:
+        print('%s is a directory' % remote_dir)
     else:
-        print("%s either exists as a file, or can't reach")
-   # wip
+        print("%s don't exist, exists as a file, or can't reach" % remote_dir)
+    remote_created = False
+    if as_root == '1':
+        runme = su
+    else:
+        runme = run
+    if not remote_exists:
+        remote_created = runme("mkdir -p %s" % remote_dir,
+                               warn_only=True).succeeded
+        remote_exists = remote_created
+    if remote_exists:
+        with lcd(local_dir):
+            put_dir = run('mktemp -d')
+            put('%s%s%s' % (local_dir, os.sep, '*'),
+                put_dir,
+                mirror_local_mode=True)
+            if delete_first == '1':
+                runme("rm -rf %s/*" % remote_dir)  # this is stupid
+            runme('cp -rpf %s%s%s %s' % (put_dir, '/', '*', remote_dir))
+            run('rm -rf %s' % put_dir)
+            if as_root == '1':
+                su('chown -R root:root %s' % remote_dir)  # this is also stupid
+    else:
+        print("%s still can't create or reach" % remote_dir)
 
 ### end file copy functions ###
-
