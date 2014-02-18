@@ -13,11 +13,11 @@ USE KFC AT YOUR OWN RISK. --av.-
 Project status
 --------------
 
-This is working alpha software. I have coded this Python Fabric recipe according
-to my needs you may find this software useful if you have an scenario similar
-to mine.
+This *is* working alpha software. I have coded this Python Fabric recipe
+according to my needs you may find this software useful if you have an scenario
+similar to mine or if you stick to the standard that KFC expects.
 
-See the source to learn how it works. Sorry, the code is still messy.
+See the source to learn how it works. Sorry, the code is *still* messy.
 
 Scenario
 --------
@@ -28,20 +28,23 @@ Scenario
    * Linux
    * AIX
  * Don't want to repeat same passwords across all OSes
- * sshd have some eccentric "security" settings
+ * sshd have some *eccentric* "security" settings
    * Don't always have direct root access (PermitRootLogin no)
    * Don't always have ssh key authentication (PubkeyAuthentication no)
    * Don't always have sudo (almost never)
    * Changing any of these settings is a hastle.
  * Want to have a simple cache to store OS output from commands. Useful for
    off-line fast Python command output parsing.
+ * Management require very often reports about servers. I want to build updated
+   and automatic reports.
 
 My proposed solution
 --------------------
 
  * Use KeePass to store the passwords safely
- * Use Python Fabric to work on OSes
- * Store command output on a simple pickle dictionary used as a LRU cache.
+ * Use Python Fabric to work on OSes via ssh
+ * Store command output on a simple pickle dictionary used as a LRU cache
+ * Build pretty reports using xlsxwriter
 
 KFC requirements
 ----------------
@@ -63,8 +66,8 @@ KFC config requirements
 
 KFC reads simple .ini configuration files.
 
-Have some "kfc/*.ini" file(s) in you $HOME directory with a configuration similar
-to this one.
+Have some "kfc/*.ini" file(s) in you $HOME directory with a configuration
+similar to this one.
 
   # global section is used to define command output cache settings.
 
@@ -86,7 +89,8 @@ to this one.
   cache_max_age = 86400
 
   # Every non-global section is treated as a KeePass database with entries
-  # under a top-level "group" which is read recursively.
+  # under a top-level "group" which is read recursively. The name of the section
+  # is arbitrary, you can have more than one section.
 
   [MyOSes]
 
@@ -108,15 +112,18 @@ your database being corrupted by KFC. (However, read the disclaimer, and have a
 copy of your KP database elsewhere)
 
 Your KeePass database needs to have a top-level group where you store all your
-subgroups and/or key entries.
+subgroups and/or key entries. KFC will walk recursively this group. Any part
+of the full path to the entry can be used for searching. Useful if you store
+hosts by function on a particular group.
 
 For hosts that have normal-user-then-su-to-root access you need an entry with
-"admin" or "Root" credentials, this is currently hardcoded in the fabric recipe.
+username *different* from "root" if no non-root entry is found, only the "root"
+entry will be used. The first found non-root entry will be used for login.
 
 For hosts that connect to ports different than 22 this simple standard is used.
 The port is read from the URL field in the KeePass DB entry, KFC search for a
--P and uses the value next to it as remote port, this convention comes from -P
-being the option on Putty to open a session on a different port.
+-P and uses the value *next* to it as remote port, this convention comes from
+-P being the option on Putty to open a session on a different port.
 
 Example URL field on a KeePass DB entry.
 
@@ -126,8 +133,9 @@ This serves as a double purpose as I also use this KeePass DB on Windows
 workstations (where by the way KFC also runs) sometimes I just open a Putty
 session by clicking the URL on KeePass program window.
 
-Entry titles which have IP address formats are ignored as I use them to
-differentiate ILOs from OSes.
+The entry *title* will be used as the host to connect but entry titles which
+look like an IP address will be ignored as I use them to differentiate ILOs from
+OSes.
 
 KFC usages
 ----------
@@ -143,7 +151,7 @@ KFC usages
 
  * Run arbitrary command against your cluster.
 
-   fab --set os_filter=HP-UX -- uname -a
+   fab --set os_filter=/HP-UX/ -- uname -a
 
    Will run "uname -a" across all Linux OSes found in you KeePass DB. KFC will
    filter any KeePass group name found in the path to the entry.
@@ -156,25 +164,49 @@ KFC usages
 
    fab --set os_filter=hostb root_shell
 
+ * Build a fancy xlsx report
+
+   fab --set os_filter=/Linux/ build_uptime_report xlsx_report
+
 KFC limitations and roadmap
 ---------------------------
 
- * Needs "admin" or "Root" user on hosts with no direct root access. Username
-   is hardcoded.
+2DO:
+
+ * The KFC "su" operation mock-up is not parallel execution safe.
+ * The cache feature of KFC is not parallel execution safe.
  * Entry title needs to be not an IP address the regular expression is hardcoded
  * serverinfo was the previous project name, this class needs to be renamed
  * cache ussage needs to be explicit
+
+Done:
+
+ * Needs "admin" or "Root" user on hosts with no direct root access. Username
+   is hardcoded.
+
+   * Username is no longer hardcoded.
+
  * fabfile.py is messy
+
+   * fabfile.py is no longer that messy
 
 Feedback
 ========
 
- * Let me know if you find this software useful. Write me an email to
-   andres.via@gmail.com
+ * Let me know if you find this software useful or if you find a bug. Write me
+   an email to <andres.via@gmail.com>.
 
 Thanks
 ======
 
- * This software will be nothing without all the great software libraries that
-   it uses.
+ * This software will be *nothing* without all the great software libraries that
+   it uses. Many thanks to the gals and guys from:
 
+   * Python
+   * Fabric
+   * Parmiko
+   * keepass
+   * Keepassdb
+   * XlsxWriter
+
+   And many others.
