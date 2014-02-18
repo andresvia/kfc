@@ -31,18 +31,19 @@ report = report
 env = env
 serverinfo = serverinfo
 unix = unix
+util = util
 #lint:enable
 
-from fabric.api import put
+from fabric.api import put, get, local
+import io
 
 
+###
+### Building a not so fancy report
+### (not like xlsx_report)
+###
 @task
-def _get_hba_info():
-    su("/usr/sbin/fcinfo hba-port", warn_only=True)
-
-
-@task
-def _get_pass_param():
+def get_pass_param():
     admin_users = ["admin", "Root", "root"]
     admin_users = _get_existing_users(admin_users)
     with settings(hide('stderr'), hide('stdout'), hide("running")):
@@ -55,6 +56,9 @@ def _get_pass_param():
         _get_pass_param_hpux(admin_users)
 
 
+###
+### Return a list of users which exists from the input list
+###
 def _get_existing_users(user_list):
     existing_users = []
     for user in user_list:
@@ -66,6 +70,9 @@ def _get_existing_users(user_list):
     return existing_users
 
 
+###
+### Get password parameters for some users
+###
 def _get_pass_param_solaris(admin_users):
     password_age_commands = ""
     for admin_user in admin_users:
@@ -79,6 +86,9 @@ def _get_pass_param_solaris(admin_users):
        "%s" % password_age_commands)
 
 
+###
+### Get password parameters for some users
+###
 def _get_pass_param_hpux(admin_users):
     password_age_commands = ""
     for admin_user in admin_users:
@@ -92,6 +102,9 @@ def _get_pass_param_hpux(admin_users):
        "%s" % password_age_commands)
 
 
+###
+### Get password parameters for some users
+###
 def _get_pass_param_linux(admin_users):
     password_age_commands = ""
     for admin_user in admin_users:
@@ -106,27 +119,39 @@ def _get_pass_param_linux(admin_users):
        "%s" % password_age_commands)
 
 
+###
+### Get format info
+###
 @task
 def _get_format():
     su("format < /dev/null ; true")
 
 
+###
+### Get multipath info
+###
 @task
 def _get_multipathll():
     su("multipath -ll ; true")
 
 
+###
+### Trying to feed rackatables with KFC
+###
 @task
 def set_rackt_value(param_name):
-    os_family = _get_os_family()
+    uname = run('uname')
     if (param_name == "RAM (MB)"):
-        if (os_family == "Linux"):
+        if (uname == "Linux"):
             with settings(hide('stderr'), hide('stdout'), hide("running")):
                 total_mem = run("free -m")
             total_mem = total_mem.splitlines()[1].split()[1]
     print(total_mem)
 
 
+###
+### Trying to build server metadata
+###
 @task
 def create_server_yaml():
     hostname = run("hostname")
@@ -155,34 +180,18 @@ def create_server_yaml():
     yaml.close()
 
 
-def _get_os_family():
-    with settings(hide('stderr'), hide('stdout'), hide("running")):
-        uname = run("uname")
-    if re.match(".*SunOS.*", uname):
-        os_family = "SunOS"
-    elif re.match(".*Linux.*", uname):
-        os_family = "Linux"
-    elif re.match(".*HP-UX.*", uname):
-        os_family = "HP-UX"
-    else:
-        os_family = "Unknown"
-    return os_family
-
-
+###
+### Get RHEL release info
+###
 @task
 def revision():
     print("@revision@")
     run("cat /etc/redhat-release")
 
 
-def is_number(s):
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
-
+###
+### Trying to build a report for Zones and LDOMs
+###
 @task
 def old_get_virtinfo():
     zones = su("echo @zoneadm@;/usr/sbin/zoneadm list -vc", warn_only=True)
@@ -202,7 +211,7 @@ def old_get_virtinfo():
         for zone in zones_splitlines:
             zone = zone.split()
             if len(zone) >= 2:
-                if(is_number(zone[0])):
+                if(util.is_number(zone[0])):
                     result_zones.append(zone[1])
 
     virtinfo_splitlines = []
@@ -238,6 +247,9 @@ def old_get_virtinfo():
                                     ", ".join(result_ldm).replace(":", "")))
 
 
+###
+### Finding "core" files
+###
 @task
 def find_core():
     run("date")
@@ -249,11 +261,9 @@ def find_core():
     run("date")
 
 
-@task
-def find_funky_tasks():
-    su("crontab -l | grep -i sh", warn_only=True)
-
-
+###
+### Finding HBA info on Solaris
+###
 @task
 def find_hbas_solaris():
     name = get_name()
@@ -264,6 +274,9 @@ def find_hbas_solaris():
         f.close()
 
 
+###
+### Finding HBA info on Linux
+###
 @task
 def find_hbas_linux():
     command_prefix = "command"
@@ -298,6 +311,9 @@ sort -u
     f.close()
 
 
+###
+### A report for Zones and LDOMs
+###
 @task
 def solaris_virtinfo():
     report.header = ['hostname', 'virtinfo']
@@ -334,6 +350,9 @@ awk 'BEGIN{printf("LDOMS: ")}NR>=2{printf("%s ", $1)}END{printf("\\n")}'
     report.append([get_name(), result])
 
 
+###
+### Another report for memory
+###
 @task
 def solaris_meminfo():
     report.header = ['hostname', 'cpuused', 'memused',
@@ -373,6 +392,9 @@ date
     report.append([get_name(), cpuused, memused, cores, memtotal, date])
 
 
+###
+### A report for mpio versions
+###
 @task
 def solaris_mpver():
     report.header = ['hostname', 'mpver', 'mppaths']
@@ -404,6 +426,9 @@ grep 'Operational Path Count:' | sort -ur | head -1
     report.append([get_name(), mpver, mppaths])
 
 
+###
+### A report for versions of volume managers (ZFS, SVM)
+###
 @task
 def solaris_volver():
     report.header = ['hostname', 'ver SUNWvolr svm',
@@ -437,6 +462,9 @@ echo -n '3: ' ; pkginfo -l SUNWmpapir  | grep -i version
     report.append([get_name(), svmver, zfsver, mpiover])
 
 
+###
+### A report for versions of volume managers (LVM)
+###
 @task
 def linux_volver():
     report.header = ['hostname', 'device-mapper-multipath',
@@ -480,6 +508,9 @@ rpm -q -a | egrep '^e2fsprogs-libs-' | head -n1 | awk 'BEGIN{printf("")}{print}'
     report.append([get_name(), svmver, zfsver, mpiover])
 
 
+###
+### A random report
+###
 @task
 def build_solaris_report():
     report.header = ['hostname',
@@ -527,6 +558,9 @@ def build_solaris_report():
                   ifconfig])
 
 
+###
+### A report for counting logical processors
+###
 @task
 def build_logic_core_count_report():
     if not hasattr(report, 'header'):
@@ -543,6 +577,9 @@ def build_logic_core_count_report():
     report.append([get_name(), cores])
 
 
+###
+### A report for memory used with no cache
+###
 @task
 def build_current_memory_usage():
     if not hasattr(report, 'header'):
@@ -570,3 +607,174 @@ def build_current_memory_usage():
                     except:
                         pass
     report.append([get_name(), curmem])
+
+
+###
+### A report for every mounted filesystem
+###
+@task
+def build_df_report():
+    uname = run('uname')
+    if uname == "Linux" or uname == "HP-UX":
+        runcmd = "%sdf -P" % unix.unlang
+    elif uname == "SunOS":
+        runcmd = "%sdf -h|tr" % unix.unlang
+    output = run(runcmd)
+    for line in output.splitlines():
+        line = line.split()
+        report.append([get_name()] + line)
+
+
+###
+### A report for every task on root crontab
+###
+@task
+def build_root_crontab_report():
+    command_prefix = "command"
+    output = su('echo @%s@;%scrontab -l' % (command_prefix, unix.unlang))
+    output = _get_command_output(output, command_prefix)
+    for line in output.splitlines():
+        line = line.split()
+        if len(line) > 0 and line[0].startswith('@'):
+                report.append([get_name()] +
+                              line[0:1] +
+                              [''] * 4 +
+                              [' '.join(line[1:])])
+        if len(line) > 0 and not line[0].startswith('#'):
+                report.append([get_name()] +
+                              line[0:5] +
+                              [' '.join(line[5:])])
+
+
+###
+### building some "security" report
+###
+@task
+def security_checks_solaris():
+    if not hasattr(report, 'header'):
+        report.header = ["hostname", "0.1 patch level",
+                         "0.2a sshd LogLevel (VERBOSE)",
+                         "0.2b sshd Protocol (2)",
+                         "0.2c sshd X11Forwarding (no)",
+                         "0.2d sshd IgnoreRhosts (yes)",
+                         "0.2e sshd RhostsAuthentication (no)",
+                         "0.2f sshd RhostsRSAAuthentication (no)",
+                         "0.2g sshd PermitRootLogin (no)",
+                         "0.2h sshd PermitEmptyPasswords (no)",
+                         "0.2i sshd Banner",
+                         "0.2j sshd_config priv",
+                         "0.2k ssh_config priv"]
+    p0_2a = "INFO"
+    p0_2b = "2"
+    p0_2c = "no"
+    p0_2d = "yes"
+    p0_2e = "no"
+    p0_2f = "no"
+    p0_2g = "yes"
+    p0_2h = "no"
+    p0_2i = "none"
+    p0_2j = ""
+    p0_2k = ""
+    with settings(hide('stderr'), hide('stdout'), hide("running")):
+        p0_1 = run('uname -v')
+        sshd_config = run('cat /etc/ssh/sshd_config')
+        p0_2j = run("ls -l /etc/ssh/sshd_config | awk '{print $1, $3, $4}'")
+        p0_2k = run("ls -l /etc/ssh/ssh_config | awk '{print $1, $3, $4}'")
+    for line in sshd_config.splitlines():
+        line = line.split()
+        if len(line) > 1:
+            if line[0].upper() == 'LOGLEVEL':
+                p0_2a = line[1]
+            elif line[0].upper() == 'PROTOCOL':
+                p0_2b = line[1]
+            elif line[0].upper() == 'X11FORWARDING':
+                p0_2c = line[1]
+            elif line[0].upper() == 'IGNORERHOSTS':
+                p0_2d = line[1]
+            elif line[0].upper() == 'RHOSTSAUTHENTICATION':
+                p0_2e = line[1]
+            elif line[0].upper() == 'RHOSTSRSAAUTHENTICATION':
+                p0_2f = line[1]
+            elif line[0].upper() == 'PERMITROOTLOGIN':
+                p0_2g = line[1]
+            elif line[0].upper() == 'PERMITEMPTYPASSWORDS':
+                p0_2h = line[1]
+            elif line[0].upper() == 'BANNER':
+                p0_2i = line[1]
+    report.append([get_name(), p0_1, p0_2a, p0_2b, p0_2c, p0_2d, p0_2e, p0_2f,
+                  p0_2g, p0_2h, p0_2i, p0_2j, p0_2k])
+
+
+###
+### making sure that /var/spool/cron/crontabs/root is always the path
+### of the root crontab
+###
+@task
+def solaris_crontab_path_ok():
+    cp = "command"
+    crontab_l = su("echo @%s@;crontab -l|cksum|cut -f1" % cp)
+    cron_file = su("echo @%s@;cksum /var/spool/cron/crontabs/root|cut -f1" % cp)
+    crontab_l = _get_command_output(crontab_l, cp)
+    cron_file = _get_command_output(cron_file, cp)
+    assert crontab_l == cron_file
+
+
+###
+### runs the string as a script can use a interpreter of
+### can be run as_root
+###
+@task
+def run_string(string, as_root=False, interpreter=''):
+    sio = io.StringIO()
+    sio.write(string)
+    run_script(sio, as_root, interpreter)
+
+
+###
+### Runs a local script or anything that put can take, like a StringIO
+###
+@task
+def run_script(script, as_root=False, interpreter=''):
+    remote_script = run('mktemp')
+    put(script, remote_script)
+    run('chmod +x %s' % remote_script)
+    if as_root == '1':
+        runwith = su
+    else:
+        runwith = run
+    r = runwith("%s%s%s" % (unix.unlang,
+                            interpreter,
+                            remote_script), warn_only=True)
+    run("rm %s" % remote_script)
+    return r
+
+
+###
+### cfg2html (http://www.cfg2html.com) is one of my "platform tools"
+### with this task I schedude the execution of cfg2html once a month
+###
+@task
+def append_cfg2html_to_solaris_crontab():
+    cronfile = "/var/spool/cron/crontabs/root"
+    cfg2html_path = "/opt/pt_platform_tools/cfg2html/cfg2html_solaris"
+    cfg2html_output = "/var/pt_platform_tools/output/cfg2html"
+    cfg2html_log = "/var/pt_platform_tools/log/cfg2html.log"
+    runme = """
+#!/bin/sh -eu
+cat >> %s  << EOF
+# monthly cfg2html
+05 00 2 * * %s -o %s >> %s 2>&1 < /dev/null
+EOF
+""" % (cronfile, cfg2html_path, cfg2html_output, cfg2html_log)
+    run_string(runme, as_root='1')
+
+
+###
+### with this task I get the output from all cfg2html collectors
+### this will only run on systems with command mkdir. ie. Linux
+###
+@task
+def get_cfg2html():
+    localdir = '/tmp/cfg2html/%s' % get_name()
+    local('mkdir -p %s' % localdir)
+    get('/var/pt_platform_tools/output/cfg2html/*', localdir)
