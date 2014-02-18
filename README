@@ -204,7 +204,7 @@ Thanks
 
    * Python
    * Fabric
-   * Parmiko
+   * Paramiko
    * keepass
    * Keepassdb
    * XlsxWriter
