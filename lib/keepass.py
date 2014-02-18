@@ -6,7 +6,6 @@ from __future__ import division
 from __future__ import absolute_import
 
 import keepassdb as kp
-#import re
 from . import util
 import getpass
 
@@ -61,9 +60,7 @@ def get_entry_pair(entry_title, entries):
     possible_entries = [x for x in entries if x.title == entry_title]
     ep = entry_pair()
     for possible_entry in possible_entries:
-        if (possible_entry.username == "Root"):
-            ep.admin = possible_entry
-        elif (possible_entry.username == "admin" and
+        if (possible_entry.username != "root" and
               ep.admin is None):
             ep.admin = possible_entry
         elif (possible_entry.username == "root"):
