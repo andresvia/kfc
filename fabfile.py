@@ -499,7 +499,7 @@ def build_uptime_report():
 
 ###
 ### Dumb dir copy, we have no rsync on most servers and most unices dont't have
-### cp -u option. This function do some stupid things we are allowing only
+### cp -u option. This function do some stupid things, we are allowing only
 ### some inputs to avoid havok. mktemp -p on some HP-UX OSes does not create
 ### the directory, so this function will only work on Linux or SunOS so far.
 ###
