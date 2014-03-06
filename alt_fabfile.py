@@ -32,10 +32,15 @@ env = env
 serverinfo = serverinfo
 unix = unix
 util = util
+io = io
+run_string = run_string
+get_uname = get_uname
+get_ifaces = get_ifaces
+socket = socket
+put = put
 #lint:enable
 
-from fabric.api import put, get, local
-import io
+from fabric.api import get, local
 
 
 ###
@@ -720,36 +725,6 @@ def solaris_crontab_path_ok():
 
 
 ###
-### runs the string as a script can use a interpreter of
-### can be run as_root
-###
-@task
-def run_string(string, as_root=False, interpreter=''):
-    sio = io.StringIO()
-    sio.write(string)
-    run_script(sio, as_root, interpreter)
-
-
-###
-### Runs a local script or anything that put can take, like a StringIO
-###
-@task
-def run_script(script, as_root=False, interpreter=''):
-    remote_script = run('mktemp')
-    put(script, remote_script)
-    run('chmod +x %s' % remote_script)
-    if as_root == '1':
-        runwith = su
-    else:
-        runwith = run
-    r = runwith("%s%s%s" % (unix.unlang,
-                            interpreter,
-                            remote_script), warn_only=True)
-    run("rm %s" % remote_script)
-    return r
-
-
-###
 ### cfg2html (http://www.cfg2html.com) is one of my "platform tools"
 ### with this task I schedude the execution of cfg2html once a month
 ###
@@ -778,3 +753,52 @@ def get_cfg2html():
     localdir = '/tmp/cfg2html/%s' % get_name()
     local('mkdir -p %s' % localdir)
     get('/var/pt_platform_tools/output/cfg2html/*', localdir)
+
+
+@task
+def zabbix_agentd():
+    # su('pkill zabbix_agentd', warn_only=True)
+    # run("svcs zabbix_agentd", warn_only=True)
+    uname = run("uname")
+    release = run("uname -r")
+    if (uname == "SunOS"):
+        if (release == "5.10"):
+            configfile = "/usr/local/zabbix/conf/zabbix_agentd.conf"
+        elif (release == "5.11"):
+            configfile = "/usr/local/zabbix/etc/zabbix_agentd.conf"
+        servicerestart = "svcadm restart zabbix_agentd"
+    elif (uname == "Linux"):
+        configfile = "/etc/zabbix/zabbix_agentd.conf"
+        servicerestart = "service zabbix-agent restart"
+    elif (uname == "HP-UX"):
+        if (release == "B.11.11"):
+            configfile = "/usr/local/zabbix/etc/zabbix_agentd.conf"
+        elif (release == "B.11.31"):
+            configfile = "/usr/local/zabbix/conf/zabbix_agentd.conf"
+        servicerestart = "/sbin/init.d/zabbix-agentd restart"
+    else:
+        print("Unexpected OS")
+        return
+    runme = """
+#!/bin/sh -eu
+configfile=%s
+if /usr/bin/test -e $configfile
+then
+  if grep platform.uname $configfile
+  then
+    echo platform.uname already in $configfile
+    exit 1
+  else
+    echo >> $configfile
+    echo '# platform.uname autoadd by fabric' >> $configfile
+    echo 'UserParameter=platform.uname[*],uname $1' >> $configfile
+    echo >> $configfile
+  fi
+else
+  echo no configfile
+  exit 1
+fi
+""" % (configfile)
+
+    if run_string(runme, as_root='1').succeeded:
+        su(servicerestart, warn_only=True)
