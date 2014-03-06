@@ -14,6 +14,8 @@ import time
 import xlsxwriter
 import tempfile
 import codecs
+import io
+import socket
 
 from fabric.api import (task, env, open_shell,
                         settings, run, hide, lcd,
@@ -136,12 +138,12 @@ def get_hostname():
     return(hostname)
 
 
-def get_uname():
-    uname = _get_cached_result('uname')
+def get_uname(param=' -a'):
+    uname = _get_cached_result('uname%s' % param)
     if uname is None:
         with settings(hide('running', 'stdout', 'debug')):
-            uname = run('uname -a')
-        _save_cached_result('uname', uname)
+            uname = run('uname%s' % param)
+        _save_cached_result('uname%s' % param, uname)
     return(uname)
 
 
@@ -156,6 +158,29 @@ def get_virtinfo():
         _save_cached_result('virtinfo', virtinfo)
     return(virtinfo)
 
+
+def get_ifaces():
+    ifaces = _get_cached_result('ifaces')
+    if ifaces is None:
+        uname = get_os_type()
+        if uname == "Linux":
+            ifconfig = "/sbin/ifconfig"
+        elif uname == "SunOS":
+            ifconfig = "/sbin/ifconfig -a"
+        elif uname == "HP-UX":
+            ifconfig = """
+#run ifconfig
+for i in `/usr/sbin/lanscan -i | awk '{print $1}'`
+do
+  /usr/sbin/ifconfig $i 2>/dev/null
+done
+"""
+        else:
+            assert False
+        with settings(hide('running', 'stdout', 'debug')):
+            ifaces = run_string(ifconfig, interpreter='/bin/sh ')
+        _save_cached_result('ifaces', ifaces)
+    return ifaces
 
 ### end basic functions ###
 
@@ -210,6 +235,35 @@ def _get_virtinfo_binary():
     Linux_virtinfo_binaries.append("/usr/sbin/virt-what")
     virtinfo_binaries = locals()[get_os_type() + '_virtinfo_binaries']
     return executable_found(virtinfo_binaries)
+
+
+###
+### runs the string as a script can use a interpreter or
+### can be run as_root
+###
+@task
+def run_string(string, as_root=False, interpreter=''):
+    sio = io.StringIO(string)
+    return run_script(sio, as_root, interpreter)
+
+
+###
+### Runs a local script or anything that put can take, like a StringIO
+###
+@task
+def run_script(script, as_root=False, interpreter=''):
+    remote_script = run('mktemp')
+    put(script, remote_script)
+    run('chmod +x %s' % remote_script)
+    if as_root == '1':
+        runwith = su
+    else:
+        runwith = run
+    r = runwith("%s%s%s" % (unix.unlang,
+                            interpreter,
+                            remote_script), warn_only=True)
+    run("rm %s" % remote_script)
+    return r
 
 
 ### end supporting functions ###
@@ -310,6 +364,48 @@ def gen_report(header, sort, separator, vseparator):
             cell = cell.replace(vseparator, vsep)
             report[i][j] = cell
     return(vseparator.join([separator.join(x) for x in report]))
+
+
+###
+### Gets an splited array of ifconfig output of a variety of OSes
+### and returns and splited array of /etc/hosts like lines
+### this function checks with socket.gethostbyname wich of the address in the
+### ifconfig input is the "main" interface of the host and builds host line
+### according to this
+###
+def get_host_lines(hostname, iface, defaultdomain=''):
+    iname = re.sub(':$', '', iface[0][0]).replace(':', '-')
+    ips = []
+    lines = []
+    hosts_format = "%s %s %s %s %s"
+    for line in iface[1:]:
+        value = ' '.join(line[1:])
+        if line[0] == "inet":
+            ips.append((value.replace('addr:', '').split()[0], ''))
+        elif line[0] == "inet6":
+            ips.append((value.replace('addr:', '').split('/')[0], '-ipv6'))
+    try:
+        resolvedip = socket.gethostbyname(hostname)
+    except:
+        resolvedip = ''
+    for (ip, ver) in ips:
+        dn = "%s-%s%s" % (hostname, iname, ver)
+        if ip == resolvedip:
+            ifhost = hostname
+        else:
+            ifhost = ''
+        if defaultdomain != '':
+            fqdn = dn + defaultdomain
+            if ifhost != '':
+                fqifhost = ifhost + defaultdomain
+            else:
+                fqifhost = ''
+        else:
+            fqdn = ''
+            fqifhost = ''
+        line = hosts_format % (ip, ifhost, fqifhost, dn, fqdn)
+        lines.append(line.split())
+    return lines
 
 
 ### end reporting support functions ###
@@ -491,6 +587,42 @@ def build_uptime_report():
         days = "up 0 days"
     days = re.search("\s+up\s+([0-9]+)\s+day", days).groups()[0]
     report.append([get_name(), days])
+
+
+###
+### Builds a /etc/hosts like file, use with save_report to update your hosts
+### file, has added benefits like knowing all the interfaces of the servers
+### and which interface is the "main" interface of the server, useful for
+### greping information from hosts
+###
+@task
+def build_hosts_file(defaultdomain=None):
+    if not hasattr(report, 'header'):
+        report.header = ["#ip-address", "hostname", "alias"]
+    ifconfig = get_ifaces()
+    ifaces = []
+    iface = []
+    for line in ifconfig.splitlines():
+        linesplit = line.split()
+        if len(line) > 0:
+            if not re.match('\s', line[0]):
+                if len(iface) == 0:
+                    iface.append(linesplit)
+                else:
+                    ifaces.append(iface)
+                    iface = []
+                    iface.append(linesplit)
+            else:
+                iface.append(linesplit)
+    if len(iface) != 0:
+        ifaces.append(iface)
+    if defaultdomain is None:
+        defaultdomain = ''
+    else:
+        defaultdomain = "." + defaultdomain
+    for iface in ifaces:
+        report.extend(get_host_lines(get_name(), iface, defaultdomain))
+
 
 ### end report building functions ###
 
