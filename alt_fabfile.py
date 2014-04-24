@@ -41,6 +41,7 @@ put = put
 #lint:enable
 
 from fabric.api import get, local
+from fabric.state import connections
 
 
 ###
@@ -620,10 +621,12 @@ def build_current_memory_usage():
 @task
 def build_df_report():
     uname = run('uname')
-    if uname == "Linux" or uname == "HP-UX":
-        runcmd = "%sdf -P" % unix.unlang
+    if uname == "Linux":
+        runcmd = "%sdf -kP" % unix.unlang
+    elif uname == "HP-UX":
+        runcmd = "%sdf -kP" % unix.unlang
     elif uname == "SunOS":
-        runcmd = "%sdf -h|tr" % unix.unlang
+        runcmd = "%sdf -k|tr" % unix.unlang
     output = run(runcmd)
     for line in output.splitlines():
         line = line.split()
@@ -657,8 +660,8 @@ def build_root_crontab_report():
 @task
 def security_checks_solaris():
     if not hasattr(report, 'header'):
-        report.header = ["hostname", "0.1 patch level",
-                         "0.2a sshd LogLevel (VERBOSE)",
+        report.header = ["hostname", "0.1 kernel version",
+                         "0.2a sshd LogLevel (verbose)",
                          "0.2b sshd Protocol (2)",
                          "0.2c sshd X11Forwarding (no)",
                          "0.2d sshd IgnoreRhosts (yes)",
@@ -668,7 +671,28 @@ def security_checks_solaris():
                          "0.2h sshd PermitEmptyPasswords (no)",
                          "0.2i sshd Banner",
                          "0.2j sshd_config priv",
-                         "0.2k ssh_config priv"]
+                         "0.2k ssh_config priv",
+                         "1.1 Print Service (disabled)",
+                         "1.2 Telnet Service (disabled)",
+                         "1.3 Finger Service (disabled)",
+                         "1.4a FTP Service (disabled)",
+                         "1.4b TFTP/UDP6 Service (disabled)",
+                         "1.4c inetd/tftp (disabled)",
+                         "1.4d Deny FTP users",
+                         "1.5a Echo datagram Service (disabled)",
+                         "1.5b Echo stream Service (disabled)",
+                         "1.6a Discard datagram Service (disabled)",
+                         "1.6b Discard stream Service (disabled)",
+                         "1.7a Chargen datagram Service (disabled)",
+                         "1.7b Chargen stream Service (disabled)",
+                         "1.8a Daytime datagram Service (disabled)",
+                         "1.8b Daytime stream Service (disabled)",
+                         "4.3 Password expire (60)",
+                         "4.4 Password history (24)",
+                         "4.5a Max retries (6)",
+                         "4.5b Lock after retries (yes)",
+                         "4.8a + Entries on passwd (0)",
+                         "4.8b + Entries on group (0)", ]
     p0_2a = "INFO"
     p0_2b = "2"
     p0_2c = "no"
@@ -681,10 +705,24 @@ def security_checks_solaris():
     p0_2j = ""
     p0_2k = ""
     with settings(hide('stderr'), hide('stdout'), hide("running")):
-        p0_1 = run('uname -v')
+        # p0_1 = run("pkginfo -l SUNWckr | grep 'VERSION' | cut -d: -f2-")
+        p0_1 = run("uname -v")
         sshd_config = run('cat /etc/ssh/sshd_config')
+        inetd_config = run('cat /etc/inetd.conf')
+        svcs_a = run('svcs -Ha -o state,fmri')
+        inetd_services = []
+        services = {}
+        ftpd_users = run('cat /etc/ftpd/ftpusers || echo')
         p0_2j = run("ls -l /etc/ssh/sshd_config | awk '{print $1, $3, $4}'")
         p0_2k = run("ls -l /etc/ssh/ssh_config | awk '{print $1, $3, $4}'")
+        p4_3 = run("egrep '^MAXWEEKS=' /etc/default/passwd || echo no")
+        p4_4 = run("egrep '^HISTORY=' /etc/default/passwd || echo no")
+        p4_5a = run("egrep '^RETRIES=' /etc/default/login || echo no")
+        p4_5b = run("egrep '^LOCK_AFTER_RETRIES=' /etc/security/policy.conf ||"
+                    "echo no")
+        p4_8a = run("egrep '^[\t ]*\+[\t ]*:' /etc/passwd | wc -l")
+        p4_8b = run("egrep '^[\t ]*\+[\t ]*:' /etc/group | wc -l")
+        uname_r = run('uname -r')
     for line in sshd_config.splitlines():
         line = line.split()
         if len(line) > 1:
@@ -706,8 +744,98 @@ def security_checks_solaris():
                 p0_2h = line[1]
             elif line[0].upper() == 'BANNER':
                 p0_2i = line[1]
+    for line in inetd_config.splitlines():
+        if re.match("^\s*[^#]", line):
+            line = line.split()
+            if len(line) > 1:
+                inetd_services.append(line[0])
+    for line in svcs_a.splitlines():
+        line = line.split()
+        services[line[1]] = line[0]
+    try:
+        if uname_r == "5.10":
+            p1_1 = services['svc:/application/print/server:default']
+        elif uname_r == "5.11":
+            p1_1 = services['svc:/application/cups/in-lpd:default']
+    except:
+        p1_1 = "uninstalled"
+    try:
+        p1_2 = services['svc:/network/telnet:default']
+    except:
+        p1_2 = "uninstalled"
+    try:
+        p1_3 = services['svc:/network/finger:default']
+    except:
+        p1_3 = "uninstalled"
+    try:
+        p1_4 = services['svc:/network/inetd:default']
+    except:
+        p1_4 = "uninstalled"
+    try:
+        p1_4a = services['svc:/network/ftp:default']
+    except:
+        p1_4a = "uninstalled"
+    try:
+        p1_4b = services['svc:/network/tftp/udp6:default']
+    except:
+        p1_4b = "uninstalled"
+    if p1_4 == 'online':
+        if 'tftp' in inetd_services:
+            p1_4c = 'enabled'
+        else:
+            p1_4c = 'disabled'
+    else:
+        p1_4c = 'inetd disabled'
+    if p1_4a == "online":
+        p1_4d = []
+        for line in ftpd_users.splitlines():
+            if re.match("^\s*[^#]", line):
+                line = line.split()
+                if len(line) > 0:
+                    p1_4d.append(line[0])
+        p1_4d = ' '.join(p1_4d)
+    else:
+        p1_4d = 'ftpd disabled'
+    try:
+        p1_5a = services['svc:/network/echo:dgram']
+    except:
+        p1_5a = "uninstalled"
+    try:
+        p1_5b = services['svc:/network/echo:stream']
+    except:
+        p1_5b = "uninstalled"
+
+    try:
+        p1_6a = services['svc:/network/discard:dgram']
+    except:
+        p1_6a = "uninstalled"
+    try:
+        p1_6b = services['svc:/network/discard:stream']
+    except:
+        p1_6b = "uninstalled"
+
+    try:
+        p1_7a = services['svc:/network/chargen:dgram']
+    except:
+        p1_7a = "uninstalled"
+    try:
+        p1_7b = services['svc:/network/chargen:stream']
+    except:
+        p1_7b = "uninstalled"
+
+    try:
+        p1_8a = services['svc:/network/daytime:dgram']
+    except:
+        p1_8a = "uninstalled"
+    try:
+        p1_8b = services['svc:/network/daytime:stream']
+    except:
+        p1_8b = "uninstalled"
+
     report.append([get_name(), p0_1, p0_2a, p0_2b, p0_2c, p0_2d, p0_2e, p0_2f,
-                  p0_2g, p0_2h, p0_2i, p0_2j, p0_2k])
+                  p0_2g, p0_2h, p0_2i, p0_2j, p0_2k, p1_1, p1_2, p1_3, p1_4a,
+                  p1_4b, p1_4c, p1_4d, p1_5a, p1_5b, p1_6a, p1_6b, p1_7a,
+                  p1_7b, p1_8a, p1_8b, p4_3, p4_4, p4_5a, p4_5b, p4_8a, p4_8b])
 
 
 ###
@@ -782,16 +910,18 @@ def zabbix_agentd():
     runme = """
 #!/bin/sh -eu
 configfile=%s
+paramname=platform.proc.mostcpu
 if /usr/bin/test -e $configfile
 then
-  if grep platform.uname $configfile
+  if grep $paramname $configfile
   then
-    echo platform.uname already in $configfile
+    echo $paramname already in $configfile
     exit 1
   else
     echo >> $configfile
-    echo '# platform.uname autoadd by fabric' >> $configfile
-    echo 'UserParameter=platform.uname[*],uname $1' >> $configfile
+    echo '# $paramname autoadd by fabric' >> $configfile
+    echo "UserParameter=$paramname,ps -fea    |\
+    sort -nrk 4    |    awk '{print \$4;exit}'" >> $configfile
     echo >> $configfile
   fi
 else
@@ -802,3 +932,316 @@ fi
 
     if run_string(runme, as_root='1').succeeded:
         su(servicerestart, warn_only=True)
+
+
+###
+### Get some fields from a shadow like input
+###
+def _get_shadow_fields(shadow, user, fields, join_with=':'):
+    for line in shadow.splitlines():
+        line = line.split(':')
+        if len(line) <= 0:
+            continue
+        if len(line[0]) <= 0:
+            continue
+        if line[0][0] == '#':
+            continue
+        if line[0] == user:
+            r = []
+            for f in fields:
+                r.append(line[f])
+            if join_with is not None:
+                return join_with.join(r)
+            else:
+                return r
+
+
+###
+### Get the value of a configuration parameter from a "param(sep)val"
+### format like file
+###
+def _get_config_param(config, param, default='', sep="\s+", comment="^\s*#",
+                      flags=re.I):
+    r = default
+    for line in config.splitlines():
+        if re.match(comment, line, flags):
+            continue
+        line = re.split(sep, line.strip(), 1, flags)
+        if len(line) <= 1:
+            continue
+        if re.match("^%s$" % (param), line[0].strip(), flags):
+            r = line[1].strip()
+    return r
+
+
+###
+### Gets an array of the fields that match a criteria
+###
+def _get_fields(input_text, select_filter, field_number, field_pattern,
+                sep="\s+", flags=re.I):
+    r = []
+    for line in input_text.splitlines():
+        if not re.match(select_filter, line, flags):
+            continue
+        line = re.split(sep, line.strip(), flags=flags)
+        if len(line) < field_number + 1:
+            continue
+        if re.match(field_pattern, line[field_number], flags):
+            r.append(line[field_number])
+    return r
+
+
+###
+### building some "security" report
+###
+@task
+def security_checks_linux():
+
+    # initializing
+    # names
+    n = {}
+    # recommended value
+    r = {}
+    # actual value
+    v = {}
+    # complies
+    c = {}
+
+    checks = ["0.1a",
+              "0.1b",
+              "0.2a",
+              "0.2b",
+              "0.2c",
+              "0.2d",
+              "0.2e",
+              "0.2f",
+              "0.2g",
+              "0.2h",
+              "0.2i",
+              "0.2j",
+              "0.2k",
+              "1.1",
+              "1.2",
+              "1.3",
+             ]
+
+    with settings(hide('stderr'), hide('stdout'), hide("running")):
+        # doing security checks
+        for check in checks:
+            if check == "0.1a":
+                # check name
+                n[check] = ("Aplicar todos los Security Hotfixes del Sistema "
+                            "Operativo -1-")
+                # check recommended value
+                r[check] = "Aplicado"
+                # check calculation
+                v[check] = "Ir a access.redhat.com"
+                # compilance
+                c[check] = "N/A"
+
+            elif check == "0.1b":
+                # check name
+                n[check] = ("La Contraseña de root debe ser cambiada cada "
+                            "cierto tiempo")
+                # check recommended value
+                r[check] = "1:60:7::"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/shadow")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_shadow_fields(v[check], "root", [3, 4, 5, 6, 7])
+
+            elif check == "0.2a":
+                # check name
+                n[check] = ("Establecer LogLevel VERBOSE Si no existe, añadir y"
+                            "configurar")
+                # check recommended value
+                r[check] = "VERBOSE"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check], "LogLevel", "INFO")
+
+            elif check == "0.2b":
+                # check name
+                n[check] = ("Establecer Protocol   2. Si no existe, añadir y "
+                            "configurar")
+                # check recommended value
+                r[check] = "2"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check], "Protocol", "2,1")
+
+            elif check == "0.2c":
+                # check name
+                n[check] = ("Establecer X11Forwarding no. Si no existe, añadir"
+                            " y configurar")
+                # check recommended value
+                r[check] = "no"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check], "X11Forwarding", "no")
+
+            elif check == "0.2d":
+                # check name
+                n[check] = ("Establecer IgnoreRhosts yes. Si no existe, añadir "
+                            "y configurar")
+                # check recommended value
+                r[check] = "yes"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check], "IgnoreRhosts", "yes")
+
+            elif check == "0.2e":
+                # check name
+                n[check] = ("Establecer RhostsAuthentication no. Si no existe, "
+                            "añadir y configurar - descontinuado -")
+                # check recommended value
+                r[check] = "SSH-2.0-OpenSSH_3.7"
+                # check calculation
+                v[check] = (connections[env.host_string].
+                            get_transport().
+                            remote_version)
+                # compilance
+                c[check] = "Si" if (v[check] >= r[check]) else "No"
+
+            elif check == "0.2f":
+                # check name
+                n[check] = ("Establecer RhostsRSAAuthentication no. Si no "
+                            "existe, añadir y configurar")
+                # check recommended value
+                r[check] = "no"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check],
+                                             "RhostsRSAAuthentication",
+                                             "no")
+
+            elif check == "0.2g":
+                # check name
+                n[check] = ("Establecer PermitRootLogin no. Si no existe, "
+                            "añadir y configurar")
+                # check recommended value
+                r[check] = "no"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check], "PermitRootLogin", "yes")
+
+            elif check == "0.2h":
+                # check name
+                n[check] = ("Establecer PermitEmptyPasswords no. Si no existe, "
+                            "añadir y configurar")
+                # check recommended value
+                r[check] = "no"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check],
+                                             "PermitEmptyPasswords",
+                                             "no")
+
+            elif check == "0.2i":
+                # check name
+                n[check] = ("Establecer Banner")
+                # check recommended value
+                r[check] = "/etc/issue"
+                # check calculation
+                v[check] = su("echo @cmnd@;cat /etc/ssh/sshd_config")
+                v[check] = _get_command_output(v[check], "cmnd")
+                v[check] = _get_config_param(v[check],
+                                             "Banner",
+                                             "none")
+
+            elif check == "0.2j":
+                # check name
+                n[check] = ("Establecer root propietario de sshd_config y "
+                            "ssh_config")
+                # check recommended value
+                r[check] = "0:[0-9]+ 0:[0-9]+"
+                # check calculation
+                v[check] = run("stat --printf '%u:%g ' /etc/ssh/sshd_config "
+                               "/etc/ssh/ssh_config")
+
+            elif check == "0.2k":
+                # check name
+                n[check] = ("Restringir el acceso de escritura a sshd_config y"
+                            "ssh_config para el propietario del archivo")
+                # check recommended value
+                r[check] = ".......0. .......0."
+                # check calculation
+                v[check] = run("stat --printf '0%a ' /etc/ssh/sshd_config "
+                               "/etc/ssh/ssh_config")
+                v[check] = ' '.join([bin(int(x, 8)).replace('0b', '').zfill(9)
+                                     for x in v[check].split()])
+                assert (len(v[check]) == 19)
+
+            elif check == "1.1":
+                # check name
+                n[check] = ("Inhabilitar el servicio xinetd/telnet")
+                # check recommended value
+                r[check] = "0"
+                # check calculation
+                v[check] = run("netstat -ntl")
+                v[check] = str(len(_get_fields(v[check],
+                                               "^tcp.*",
+                                               3,
+                                               ".*:22$")))
+
+            elif check == "1.2":
+                # check name
+                n[check] = ("Inhabilitar el servicio xinetd/finger")
+                # check recommended value
+                r[check] = "0"
+                # check calculation
+                v[check] = run("netstat -ntl")
+                open_sockets = 0
+                for line in v[check].splitlines():
+                    line = line.split()
+                    if re.match("^tcp.*", line[0]):
+                        if re.match(".*:79$", line[3]):
+                            open_sockets += 1
+                v[check] = str(open_sockets)
+
+            elif check == "1.3":
+                # check name
+                n[check] = ("Inhabilitar el servicio xinetd/tftp e xinetd/ftp")
+                # check recommended value
+                r[check] = "0 0"
+                # check calculation
+                v[check] = run("netstat -nul")
+                open_tftp_sockets = 0
+                for line in v[check].splitlines():
+                    line = line.split()
+                    if re.match("^udp.*", line[0]):
+                        if re.match(".*:69$", line[3]):
+                            open_tftp_sockets += 1
+                v[check] = str(open_tftp_sockets)
+
+    # check evaluation
+    for check in checks:
+        if check not in c:
+            if re.match("^\s*%s\s*$" % r[check], v[check], re.I):
+                c[check] = "Si"
+            else:
+                c[check] = "No"
+
+    # building header
+    if not hasattr(report, 'header'):
+        report.header = ["hostname"]
+        for check in checks:
+            report.header.append("%s - %s (%s)" % (check,
+                                                   n[check],
+                                                   r[check]))
+            report.header.append("%s cumple" % check)
+
+    # building report columns
+    row = []
+    row.append(get_name())
+    for check in checks:
+        row.append(v[check])
+        row.append(c[check])
+    report.append(row)

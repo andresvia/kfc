@@ -248,7 +248,10 @@ def run_string(string, as_root=False, interpreter=''):
 
 
 ###
-### Runs a local script or anything that put can take, like a StringIO
+### Runs a local script or anything that put can take, like a StringIO.
+###
+### If fails with "size mismatch in put!  0 != X" /tmp on remote host may have
+### not enough free space.
 ###
 @task
 def run_script(script, as_root=False, interpreter=''):
@@ -585,7 +588,11 @@ def build_uptime_report():
         days = uptime[0]
     else:
         days = "up 0 days"
-    days = re.search("\s+up\s+([0-9]+)\s+day", days).groups()[0]
+    try:
+        days = re.search("\s+up\s+([0-9]+)\s+day", days).groups()[0]
+    except:
+        days = "0"
+
     report.append([get_name(), days])
 
 
@@ -634,6 +641,9 @@ def build_hosts_file(defaultdomain=None):
 ### cp -u option. This function do some stupid things, we are allowing only
 ### some inputs to avoid havok. mktemp -p on some HP-UX OSes does not create
 ### the directory, so this function will only work on Linux or SunOS so far.
+###
+### If fails with "size mismatch in put!  0 != X" /tmp on remote host may have
+### not enough free space.
 ###
 @task
 def dumb_dir_copy(local_dir, remote_dir, delete_first=False,
