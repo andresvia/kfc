@@ -153,7 +153,7 @@ KFC usages
 
    fab --set os_filter=/HP-UX/ -- uname -a
 
-   Will run "uname -a" across all Linux OSes found in you KeePass DB. KFC will
+   Will run "uname -a" across all HP-UX OSes found in you KeePass DB. KFC will
    filter any KeePass group name found in the path to the entry.
 
  * Open a remote shell
